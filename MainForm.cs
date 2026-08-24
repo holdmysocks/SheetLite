@@ -24,6 +24,7 @@ internal sealed partial class MainForm : Form
     private readonly List<Image> chromeGlyphs = [];
     private readonly TableLayoutPanel editorRoot = new();
     private readonly ContextMenuStrip rowMenu = new(), columnMenu = new();
+    private readonly ContextMenuStrip secondaryRowMenu = new(), secondaryColumnMenu = new();
     private readonly ContextMenuStrip cellMenu = new();
     private ColumnFilterPopup? columnFilterPopup;
     private readonly Panel[] editOutline = [new(), new(), new(), new()];
@@ -49,7 +50,7 @@ internal sealed partial class MainForm : Form
     {
         model = workbook.ActiveSheet.Sheet;
         primaryPane = new WorksheetPaneController(grid, new SheetModelDataSource(() => model), columnMenu, rowMenu, () => !loading);
-        secondaryPane = new WorksheetPaneController(secondaryGrid, new SheetModelDataSource(() => secondaryModel ?? model), null, null, () => !secondaryLoading);
+        secondaryPane = new WorksheetPaneController(secondaryGrid, new SheetModelDataSource(() => secondaryModel ?? model), secondaryColumnMenu, secondaryRowMenu, () => !secondaryLoading);
         foreach (var pane in new[] { primaryPane, secondaryPane })
         {
             pane.RegularFont = Font; pane.BoldFont = boldCellFont;
@@ -448,6 +449,7 @@ internal sealed partial class MainForm : Form
     private void BuildHeaderMenus()
     {
         BuildRowHeaderMenu(); BuildColumnHeaderMenu();
+        BuildSecondaryRowHeaderMenu(); BuildSecondaryColumnHeaderMenu();
 
         ConfigureContextMenu(cellMenu);
         AddContextItem(cellMenu, "Cut", Cut, "Ctrl+X");

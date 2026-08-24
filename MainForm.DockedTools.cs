@@ -835,6 +835,7 @@ internal sealed partial class MainForm
             secondaryGrid.CurrentCell = secondaryGrid[Math.Clamp(currentColumn, 0, secondaryGrid.ColumnCount - 1), Math.Clamp(currentRow, 0, secondaryGrid.RowCount - 1)];
             try { secondaryGrid.FirstDisplayedScrollingRowIndex = Math.Clamp(firstRow, 0, secondaryGrid.RowCount - 1); secondaryGrid.FirstDisplayedScrollingColumnIndex = Math.Clamp(firstColumn, 0, secondaryGrid.ColumnCount - 1); } catch { }
         }
+        ReapplySecondaryFilterIfActive();
     }
 
     /// <summary>Repaint pass: display values are recomputed lazily through the version-keyed data-source context.</summary>
