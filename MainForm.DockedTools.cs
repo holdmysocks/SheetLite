@@ -353,10 +353,6 @@ internal sealed partial class MainForm
         secondaryGrid.ColumnHeadersDefaultCellStyle = new() { BackColor = Theme.HeaderBackground, ForeColor = Theme.Foreground, SelectionBackColor = Theme.Selection, SelectionForeColor = Theme.Purple, Alignment = DataGridViewContentAlignment.MiddleCenter }; secondaryGrid.RowHeadersDefaultCellStyle = new() { BackColor = Theme.HeaderBackground, ForeColor = Theme.Comment, SelectionBackColor = Theme.Selection, SelectionForeColor = Theme.Purple };
         secondaryGrid.AllowUserToAddRows = false; secondaryGrid.ReadOnly = false; secondaryGrid.RowTemplate.Height = 23; secondaryGrid.RowHeadersWidth = 50; secondaryGrid.RowHeadersVisible = true; secondaryGrid.ColumnHeadersHeight = 25; secondaryGrid.SelectionMode = DataGridViewSelectionMode.CellSelect; secondaryGrid.MultiSelect = true;
         secondaryGrid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
-        secondaryGrid.VirtualMode = true;
-        secondaryGrid.CellValueNeeded += SecondaryCellValueNeeded;
-        secondaryGrid.CellValuePushed += SecondaryCellValuePushed;
-        secondaryGrid.CellFormatting += SecondaryCellFormatting;
         secondaryScrollCorner.BackColor = Theme.Hover; secondaryScrollCorner.Size = new(SystemInformation.VerticalScrollBarWidth, SystemInformation.HorizontalScrollBarHeight); secondaryScrollCorner.Anchor = AnchorStyles.Right | AnchorStyles.Bottom; secondaryScrollCorner.Enabled = false;
         secondaryGrid.Controls.Add(secondaryScrollCorner); secondaryGrid.Resize += (_, _) => PositionScrollCorner(secondaryGrid, secondaryScrollCorner); secondaryGrid.HandleCreated += (_, _) => PositionScrollCorner(secondaryGrid, secondaryScrollCorner);
         secondaryGrid.CellPainting += PaintSecondaryHeader;
@@ -365,7 +361,6 @@ internal sealed partial class MainForm
         secondaryGrid.Enter += (_, _) => SetActivePane(true); secondaryGrid.MouseDown += (_, _) => SetActivePane(true);
         secondaryGrid.MouseDown += BeginSecondaryFillDrag; secondaryGrid.MouseMove += ContinueSecondaryFillDrag; secondaryGrid.MouseUp += EndSecondaryFillDrag; secondaryGrid.Paint += PaintSecondaryFillPreview;
         secondaryGrid.SelectionChanged += (_, _) => { if (secondaryPaneActive) UpdateStatus(); }; secondaryGrid.CurrentCellChanged += (_, _) => { if (secondaryPaneActive) UpdateStatus(); };
-        secondaryGrid.CellBeginEdit += BeginSecondaryCellEdit; secondaryGrid.CellEndEdit += FinishSecondaryCellEdit;
         secondaryGrid.CellParsing += (_, e) => { if (e.Value is not null) { e.Value = e.Value.ToString(); e.ParsingApplied = true; } };
         secondaryGrid.EditingControlShowing += (_, e) => { if (e.Control is TextBox box) { box.BorderStyle = BorderStyle.None; box.BackColor = Theme.Selection; box.ForeColor = Theme.Foreground; } };
     }
@@ -375,7 +370,7 @@ internal sealed partial class MainForm
         if ((e.RowIndex >= 0 && e.ColumnIndex >= 0) || e.Graphics is null) return;
         bool selected = e.State.HasFlag(DataGridViewElementStates.Selected); using var background = new SolidBrush(selected ? Theme.Selection : Theme.HeaderBackground); e.Graphics.FillRectangle(background, e.CellBounds);
         using var border = new Pen(Theme.CurrentLine); e.Graphics.DrawLine(border, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom); e.Graphics.DrawLine(border, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
-        string text = e.RowIndex == -1 && e.ColumnIndex >= 0 ? secondaryGrid.Columns[e.ColumnIndex].HeaderText : e.ColumnIndex == -1 && e.RowIndex >= 0 ? (e.RowIndex + 1).ToString() : "";
+        string text = e.RowIndex == -1 && e.ColumnIndex >= 0 ? secondaryGrid.Columns[e.ColumnIndex].HeaderText : e.ColumnIndex == -1 && e.RowIndex >= 0 ? (SecondaryModelRow(e.RowIndex) + 1).ToString() : "";
         Color color = selected ? Theme.Purple : e.RowIndex == -1 ? Theme.Foreground : Theme.Comment; var flags = TextFormatFlags.VerticalCenter | (e.ColumnIndex == -1 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter) | TextFormatFlags.EndEllipsis;
         TextRenderer.DrawText(e.Graphics, text, e.CellStyle?.Font ?? Font, Rectangle.Inflate(e.CellBounds, -6, 0), color, flags); e.Handled = true;
     }
@@ -479,6 +474,7 @@ internal sealed partial class MainForm
     private void ApplySecondaryFill(CellRange source, CellRange target)
     {
         if (secondaryModel is null) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo(); secondaryLoading = true;
+        source = new CellRange(source.Left, SecondaryModelRow(source.Top), source.Right, SecondaryModelRow(source.Bottom)); target = new CellRange(target.Left, SecondaryModelRow(target.Top), target.Right, SecondaryModelRow(target.Bottom));
         if (target.Bottom > source.Bottom)
             for (int column = source.Left; column <= source.Right; column++) { var pattern = Enumerable.Range(source.Top, source.Height).Select(row => secondaryModel.Rows[row][column].Clone()).ToList(); for (int row = source.Bottom + 1; row <= target.Bottom; row++) { int offset = row - source.Bottom - 1; SetSecondaryFilledCell(row, column, pattern, offset, source.Top + offset % source.Height, column); } }
         else if (target.Top < source.Top)
@@ -498,7 +494,7 @@ internal sealed partial class MainForm
 
     private void SetSecondaryFilledCell(int row, int column, List<CellModel> pattern, int offset, int sourceRow, int sourceColumn)
     {
-        if (secondaryModel is null) return; secondaryModel.ReplaceCell(row, column, CreateFilledCell(pattern, offset, row, column, sourceRow, sourceColumn)); secondaryGrid.InvalidateCell(column, row);
+        if (secondaryModel is null) return; secondaryModel.ReplaceCell(row, column, CreateFilledCell(pattern, offset, row, column, sourceRow, sourceColumn)); int displayRow = secondaryPane.DisplayRow(row); if (displayRow >= 0) secondaryGrid.InvalidateCell(column, displayRow);
     }
 
     private void ShowFindBar(bool showReplace)
@@ -514,20 +510,25 @@ internal sealed partial class MainForm
         if (string.IsNullOrEmpty(findBox.Text)) { findStatus.Text = "No results"; return; }
         var context = FormulaEngine.CreateContext(model);
         int count = 0;
-        for (int r = 0; r < grid.RowCount && r < model.Rows.Count; r++)
-        {
-            if (!grid.Rows[r].Visible) continue;
-            for (int c = 0; c < grid.ColumnCount && c < model.Rows[r].Count; c++)
-                if (model.EvaluatedValue(r, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) count++;
-        }
+        foreach (int row in primaryPane.View.VisibleRows)
+            for (int c = 0; c < grid.ColumnCount && row < model.Rows.Count && c < model.Rows[row].Count; c++)
+                if (model.EvaluatedValue(row, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) count++;
         findStatus.Text = count == 0 ? "No results" : $"{count:N0} result{(count == 1 ? "" : "s")}";
     }
     private void FindNext(bool backwards)
     {
-        string term = findBox.Text; if (term.Length == 0) return; var context = FormulaEngine.CreateContext(model); int total = grid.RowCount * grid.ColumnCount; int current = grid.CurrentCell is null ? 0 : grid.CurrentCell.RowIndex * grid.ColumnCount + grid.CurrentCell.ColumnIndex;
-        for (int n = 1; n <= total; n++) { int p = (current + (backwards ? -n : n) + total * 2) % total, r = p / grid.ColumnCount, c = p % grid.ColumnCount; if (grid.Rows[r].Visible && EvaluatedCellValue(r, c, context).Contains(term, StringComparison.CurrentCultureIgnoreCase)) { grid.CurrentCell = grid[c, r]; grid.ClearSelection(); grid[c, r].Selected = true; grid.FirstDisplayedScrollingRowIndex = Math.Max(0, r - 2); return; } }
+        string term = findBox.Text; if (term.Length == 0 || grid.ColumnCount == 0 || primaryPane.View.DisplayRowCount == 0) return;
+        var context = FormulaEngine.CreateContext(model);
+        var visible = primaryPane.View.VisibleRows; int columns = grid.ColumnCount, total = visible.Count * columns;
+        int currentFlat = Math.Clamp(grid.CurrentCell?.RowIndex ?? 0, 0, visible.Count - 1) * columns + Math.Max(0, grid.CurrentCell?.ColumnIndex ?? 0);
+        for (int n = 1; n <= total; n++)
+        {
+            int p = (currentFlat + (backwards ? -n : n) + total * 2) % total, displayRow = p / columns, c = p % columns, modelRow = visible[displayRow];
+            if (modelRow < model.Rows.Count && c < model.Rows[modelRow].Count && EvaluatedCellValue(modelRow, c, context).Contains(term, StringComparison.CurrentCultureIgnoreCase))
+            { grid.CurrentCell = grid[c, displayRow]; grid.ClearSelection(); grid[c, displayRow].Selected = true; grid.FirstDisplayedScrollingRowIndex = Math.Max(0, displayRow - 2); return; }
+        }
     }
-    private void ReplaceCurrent() { if (grid.CurrentCell is null || findBox.Text.Length == 0) return; int row = grid.CurrentCell.RowIndex, column = grid.CurrentCell.ColumnIndex; if (row >= model.Rows.Count || column >= model.Rows[row].Count) { FindNext(false); return; } string value = MatchableCellValue(row, column); if (!value.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) { FindNext(false); return; } PushUndo(); string replaced = ReplaceInsensitive(value, findBox.Text, replaceBox.Text); model.SetCellValue(row, column, replaced); grid.InvalidateCell(column, row); ReapplyDockedFilterIfActive(); SetDirtyCell(row, column); UpdateFindStatus(); }
+    private void ReplaceCurrent() { if (grid.CurrentCell is null || findBox.Text.Length == 0) return; int row = ModelRow(grid.CurrentCell.RowIndex), column = grid.CurrentCell.ColumnIndex; if (row >= model.Rows.Count || column >= model.Rows[row].Count) { FindNext(false); return; } string value = MatchableCellValue(row, column); if (!value.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) { FindNext(false); return; } PushUndo(); string replaced = ReplaceInsensitive(value, findBox.Text, replaceBox.Text); model.SetCellValue(row, column, replaced); grid.InvalidateCell(column, row); ReapplyDockedFilterIfActive(); SetDirtyCell(row, column); UpdateFindStatus(); }
     private void ReplaceAllDocked() { if (findBox.Text.Length == 0) return; var context = FormulaEngine.CreateContext(model); var matches = new List<(int Row, int Column)>(); for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) if (MatchableCellValue(r, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) matches.Add((r, c)); if (matches.Count == 0) { findStatus.Text = "No results"; return; } PushUndo(); var replacements = matches.Select(match => (match.Row, match.Column, Value: ReplaceInsensitive(MatchableCellValue(match.Row, match.Column, context), findBox.Text, replaceBox.Text))).ToList(); loading = true; foreach (var (row, column, value) in replacements) model.SetCellValue(row, column, value); loading = false; grid.Invalidate(); ReapplyDockedFilterIfActive(); SetDirty(); findStatus.Text = $"Replaced {replacements.Count:N0}"; }
 
     private void ShowFilterBar() { PopulateColumnTools(); filterBar.Visible = true; RefreshCommandHost(); filterValue.Focus(); }
@@ -536,10 +537,24 @@ internal sealed partial class MainForm
     private void ApplyDockedFilter()
     {
         headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null;
-        if (filterColumn.SelectedIndex < 0) return; int firstColumn = filterColumn.SelectedIndex; string firstOperator = filterOperator.Text, firstValue = filterValue.Text; int visible = 0;
+        if (filterColumn.SelectedIndex < 0) return; int firstColumn = filterColumn.SelectedIndex; string firstOperator = filterOperator.Text, firstValue = filterValue.Text;
         if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[0, 0];
+        primaryPane.ResetViewToSheet();
         var context = FormulaEngine.CreateContext(model);
-        for (int r = 1; r < grid.RowCount; r++) { bool match = FilterMatch(EvaluatedCellValue(r, firstColumn, context), firstOperator, firstValue); if (secondFilterVisible && filterColumn2.SelectedIndex >= 0) { bool other = FilterMatch(EvaluatedCellValue(r, filterColumn2.SelectedIndex, context), filterOperator2.Text, filterValue2.Text); match = filterJoin.Text == "OR" ? match || other : match && other; } grid.Rows[r].Visible = match; if (match) visible++; }
+        var keep = new HashSet<int>();
+        for (int r = 1; r < model.Rows.Count; r++)
+        {
+            bool match = FilterMatch(EvaluatedCellValue(r, firstColumn, context), firstOperator, firstValue);
+            if (secondFilterVisible && filterColumn2.SelectedIndex >= 0)
+            {
+                bool other = FilterMatch(EvaluatedCellValue(r, filterColumn2.SelectedIndex, context), filterOperator2.Text, filterValue2.Text);
+                match = filterJoin.Text == "OR" ? match || other : match && other;
+            }
+            if (match) keep.Add(r);
+        }
+        primaryPane.View.HideRows(row => row > 0 && !keep.Contains(row));
+        int visible = primaryPane.View.DisplayRowCount - 1;
+        primaryPane.ApplyView();
         filter = firstValue; MirrorPrimaryRowVisibilityToSharedSecondary(); countLabel.Text = $"{visible:N0} visible rows × {grid.ColumnCount:N0} columns"; UpdateFindStatus();
     }
     private void ReapplyDockedFilterIfActive() { if (headerFilterColumn >= 0 && headerFilterValues is not null) ApplyHeaderValueFilter(headerFilterColumn, headerFilterValues); else if (headerFilterColumn >= 0 && headerFilterOperator is not null) ApplyHeaderConditionFilter(headerFilterColumn, headerFilterOperator, headerFilterConditionValue ?? ""); else if (filter is not null && filterColumn.SelectedIndex >= 0 && grid.RowCount > 0) ApplyDockedFilter(); }
@@ -550,7 +565,7 @@ internal sealed partial class MainForm
 
     private void ShowSortPanel()
     {
-        if (!sortPanel.Visible) { FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = dirty; sortSelectedRows = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => cell.RowIndex).Where(row => row > 0 && row < model.Rows.Count).Distinct().Order().ToList(); sortPreviewApplied = false; sortSaveButton.Enabled = sortRevertButton.Enabled = false; }
+        if (!sortPanel.Visible) { FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = dirty; sortSelectedRows = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => ModelRow(cell.RowIndex)).Where(row => row > 0 && row < model.Rows.Count).Distinct().Order().ToList(); sortPreviewApplied = false; sortSaveButton.Enabled = sortRevertButton.Enabled = false; }
         PopulateColumnTools(); sortPanel.Visible = true; RefreshCommandHost();
     }
     private void ApplyDockedSort()
@@ -746,7 +761,7 @@ internal sealed partial class MainForm
     private bool CloseSplitView()
     {
         if (!ConfirmAllSecondaryDocumentsClose()) return false;
-        SetActivePane(false); splitView.Panel2Collapsed = true; secondaryWorkbook = null; secondaryModel = null; secondaryPath = null; secondaryDirty = secondarySharesPrimary = false; secondaryDocuments.Clear(); secondaryDocumentIndex = 0; secondaryEditAddress = null; secondaryGrid.Columns.Clear(); RefreshSecondarySheetTabs(); RefreshDocumentTabs(); UpdateSplitChrome(); return true;
+        SetActivePane(false); splitView.Panel2Collapsed = true; secondaryWorkbook = null; secondaryModel = null; secondaryPath = null; secondaryDirty = secondarySharesPrimary = false; secondaryDocuments.Clear(); secondaryDocumentIndex = 0; secondaryGrid.Columns.Clear(); RefreshSecondarySheetTabs(); RefreshDocumentTabs(); UpdateSplitChrome(); return true;
     }
 
     private void ToggleSqlConsole(bool? visible = null) { bool show = visible ?? !sqlPanel.Visible; sqlPanel.Visible = show; workspaceLayout.RowStyles[1].Height = show ? 300 : 0; if (show) { RefreshSqlSources(); sqlEditor.Focus(); } workspaceLayout.PerformLayout(); }
@@ -806,10 +821,7 @@ internal sealed partial class MainForm
         int firstColumn = preserveViewport && secondaryGrid.ColumnCount > 0 ? Math.Max(0, secondaryGrid.FirstDisplayedScrollingColumnIndex) : 0;
         int currentRow = preserveViewport ? secondaryGrid.CurrentCell?.RowIndex ?? 0 : 0, currentColumn = preserveViewport ? secondaryGrid.CurrentCell?.ColumnIndex ?? 0 : 0;
         FlushPendingEdits(secondaryGrid);
-        secondaryLoading = true; secondaryGrid.Columns.Clear();
-        int columns = Math.Max(26, secondaryModel.ColumnCount), rows = Math.Max(100, secondaryModel.Rows.Count); secondaryModel.EnsureSize(rows, columns);
-        for (int c = 0; c < columns; c++) secondaryGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = ColumnName(c), HeaderText = ColumnName(c), SortMode = DataGridViewColumnSortMode.NotSortable, Width = 110 });
-        secondaryGrid.RowCount = rows;
+        secondaryLoading = true; secondaryPane.RenderSheet(secondaryModel);
         ApplySecondaryFreeze(); secondaryLoading = false;
         if (secondaryGrid.RowCount > 0 && secondaryGrid.ColumnCount > 0)
         {
@@ -821,28 +833,22 @@ internal sealed partial class MainForm
     /// <summary>Repaint pass: display values are recomputed lazily through the version-keyed data-source context.</summary>
     private void RecalculateSecondaryFormulaCells() => secondaryGrid.Invalidate();
 
-    private void SecondaryCellValueNeeded(object? sender, DataGridViewCellValueEventArgs e)
+    private bool OnSecondaryEditStarting(int row, int column)
     {
-        if (secondaryModel is null || e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= secondaryModel.RowCount || e.RowIndex >= secondaryModel.Rows.Count || e.ColumnIndex >= secondaryModel.Rows[e.RowIndex].Count) { e.Value = ""; return; }
-        var address = new CellAddress(e.RowIndex, e.ColumnIndex);
-        e.Value = secondaryEditAddress is { } editing && editing == address ? secondaryModel.GetRawValue(address.Row, address.Column) : secondarySource.GetEvaluatedText(address);
+        if (secondaryModel is null || secondaryLoading) return false;
+        if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo();
+        return true;
     }
 
-    private void SecondaryCellValuePushed(object? sender, DataGridViewCellValueEventArgs e)
+    private void OnSecondaryEditFinished(int row, int column) => UpdateStatus();
+
+    private void OnSecondaryCellCommitted(int row, int column)
     {
-        if (secondaryLoading || secondaryModel is null || e.RowIndex < 0 || e.ColumnIndex < 0) return;
-        secondaryModel.SetCellValue(e.RowIndex, e.ColumnIndex, e.Value?.ToString() ?? "");
-        if (secondaryModel.IsFormula(e.RowIndex, e.ColumnIndex)) { var result = FormulaEngine.Evaluate(secondaryModel, e.RowIndex, e.ColumnIndex); typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error"; }
+        if (secondaryModel is null) return;
+        if (secondaryModel.IsFormula(row, column)) { var result = FormulaEngine.Evaluate(secondaryModel, row, column); typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error"; }
         RecalculateSecondaryFormulaCells();
-        if (secondarySharesPrimary) { grid.Invalidate(); SetDirtyCell(e.RowIndex, e.ColumnIndex); }
+        if (secondarySharesPrimary) { grid.Invalidate(); SetDirtyCell(row, column); }
         else SetSecondaryDirty();
-    }
-
-    private void SecondaryCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
-    {
-        if (secondaryModel is null || e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= secondaryModel.RowCount || e.RowIndex >= secondaryModel.Rows.Count || e.ColumnIndex >= secondaryModel.Rows[e.RowIndex].Count) return;
-        CellDisplayValue display = secondarySource.GetDisplayValue(new(e.RowIndex, e.ColumnIndex));
-        e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor; e.CellStyle.Font = display.Bold ? boldCellFont : Font;
     }
 
     private void ApplySecondaryFreeze()
@@ -856,7 +862,7 @@ internal sealed partial class MainForm
         secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path;
         int rows = Math.Max(100, model.RowCount), columns = Math.Max(26, model.ColumnCount);
         if (secondaryGrid.RowCount != rows || secondaryGrid.ColumnCount != columns) RenderSecondaryModel(preserveViewport: true);
-        else { ApplySecondaryFreeze(); MirrorPrimaryRowVisibilityToSharedSecondary(); secondaryGrid.Invalidate(); }
+        else { ApplySecondaryFreeze(); MirrorPrimaryRowVisibilityToSharedSecondary(); }
         RefreshSecondarySheetTabs(); UpdateSecondaryTitle();
     }
 
@@ -865,36 +871,25 @@ internal sealed partial class MainForm
         if (!secondarySharesPrimary || splitView.Panel2Collapsed || secondaryLoading) return;
         secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path;
         if (secondaryGrid.RowCount != Math.Max(100, model.RowCount) || secondaryGrid.ColumnCount != Math.Max(26, model.ColumnCount)) { RenderSecondaryModel(preserveViewport: true); return; }
-        secondaryGrid.Invalidate();
+        MirrorPrimaryRowVisibilityToSharedSecondary();
     }
 
     private void MirrorPrimaryRowVisibilityToSharedSecondary()
     {
-        if (!secondarySharesPrimary || splitView.Panel2Collapsed || secondaryGrid.RowCount == 0) return;
-        if (secondaryGrid.CurrentCell is not null && secondaryGrid.CurrentCell.RowIndex < grid.RowCount && !grid.Rows[secondaryGrid.CurrentCell.RowIndex].Visible)
+        if (!secondarySharesPrimary || splitView.Panel2Collapsed || secondaryGrid.RowCount == 0 || secondaryGrid.ColumnCount == 0) return;
+        // The shared pane mirrors the primary view: same sheet, same filtered subset.
+        var hidden = primaryPane.View.VisibleRows.ToHashSet();
+        secondaryPane.View.Reset(Math.Max(100, model.RowCount), Math.Max(26, model.ColumnCount));
+        secondaryPane.View.HideRows(row => !hidden.Contains(row));
+        secondaryPane.ApplyView();
+        if (secondaryGrid.CurrentCell is not null && !primaryPane.View.IsRowVisible(primaryPane.ModelRow(Math.Min(secondaryGrid.CurrentCell.RowIndex, primaryPane.View.DisplayRowCount - 1))))
             secondaryGrid.CurrentCell = secondaryGrid[0, 0];
-        int count = Math.Min(grid.RowCount, secondaryGrid.RowCount);
-        for (int row = 0; row < count; row++) secondaryGrid.Rows[row].Visible = grid.Rows[row].Visible;
         secondaryGrid.Invalidate();
     }
 
     private void RebindSharedSecondary()
     {
         if (!secondarySharesPrimary) return; secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path; secondaryDirty = false; UpdateSecondaryTitle();
-    }
-
-    private void BeginSecondaryCellEdit(object? sender, DataGridViewCellCancelEventArgs e)
-    {
-        if (secondaryModel is null || secondaryLoading) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo();
-        secondaryEditAddress = new CellAddress(e.RowIndex, e.ColumnIndex);
-    }
-
-    private void FinishSecondaryCellEdit(object? sender, DataGridViewCellEventArgs e)
-    {
-        secondaryEditAddress = null;
-        if (secondaryLoading || e.RowIndex < 0 || e.ColumnIndex < 0) return;
-        secondaryGrid.InvalidateCell(e.ColumnIndex, e.RowIndex);
-        UpdateStatus();
     }
 
     private void SetSecondaryDirty() { secondaryDirty = true; CaptureSecondaryDocument(); RefreshDocumentTabs(); UpdateFileTabChrome(); UpdateStatus(); }
@@ -913,13 +908,13 @@ internal sealed partial class MainForm
         if (secondaryModel is null || secondaryGrid.CurrentCell is null || !Clipboard.ContainsText()) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo();
         string[][] rows = Clipboard.GetText().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Select(line => line.Split('\t')).ToArray(); int startRow = secondaryGrid.CurrentCell.RowIndex, startColumn = secondaryGrid.CurrentCell.ColumnIndex;
         secondaryModel.EnsureSize(startRow + rows.Length, startColumn + rows.Max(row => row.Length)); if (secondaryGrid.RowCount < secondaryModel.Rows.Count || secondaryGrid.ColumnCount < secondaryModel.ColumnCount) RenderSecondaryModel(preserveViewport: true);
-        secondaryLoading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) secondaryModel.SetCellValue(startRow + r, startColumn + c, rows[r][c]); secondaryLoading = false; RecalculateSecondaryFormulaCells();
+        secondaryLoading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) secondaryModel.SetCellValue(SecondaryModelRow(startRow) + r, startColumn + c, rows[r][c]); secondaryLoading = false; RecalculateSecondaryFormulaCells();
         if (secondarySharesPrimary) { model = secondaryModel; Render(); SetDirty(); SetActivePane(true); } else SetSecondaryDirty();
     }
     private void SecondaryDeleteContents()
     {
         if (secondaryModel is null || secondaryGrid.SelectedCells.Count == 0) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo(); secondaryLoading = true;
-        foreach (DataGridViewCell cell in secondaryGrid.SelectedCells) secondaryModel.SetCellValue(cell.RowIndex, cell.ColumnIndex, ""); secondaryGrid.Invalidate(); RecalculateSecondaryFormulaCells(); secondaryLoading = false;
+        foreach (DataGridViewCell cell in secondaryGrid.SelectedCells) secondaryModel.SetCellValue(SecondaryModelRow(cell.RowIndex), cell.ColumnIndex, ""); secondaryGrid.Invalidate(); RecalculateSecondaryFormulaCells(); secondaryLoading = false;
         if (secondarySharesPrimary) { model = secondaryModel; grid.Invalidate(); RecalculateFormulaCells(); SetDirty(); } else SetSecondaryDirty();
     }
 

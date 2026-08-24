@@ -105,7 +105,7 @@ internal sealed partial class MainForm
 
     private void DeleteDuplicateRows()
     {
-        var selected = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => cell.RowIndex).Where(row => row > 0 && row < model.Rows.Count).Distinct().Order().ToList();
+        var selected = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => ModelRow(cell.RowIndex)).Where(row => row > 0 && row < model.Rows.Count).Distinct().Order().ToList();
         if (selected.Count == 0) selected = Enumerable.Range(1, Math.Max(0, model.Rows.Count - 1)).ToList();
         var seen = new HashSet<string>(StringComparer.Ordinal); var duplicates = new List<int>();
         foreach (int row in selected) { string key = string.Join('\u001f', model.Rows[row].Select(cell => cell.Value)); if (!seen.Add(key)) duplicates.Add(row); }
@@ -115,17 +115,19 @@ internal sealed partial class MainForm
 
     private void HideSelectedRows()
     {
-        var rows = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => cell.RowIndex).Distinct().Where(row => row >= 0).ToList(); if (rows.Count == 0 || rows.Count >= grid.Rows.Cast<DataGridViewRow>().Count(row => row.Visible)) return;
-        int next = Enumerable.Range(0, grid.RowCount).FirstOrDefault(row => !rows.Contains(row) && grid.Rows[row].Visible); if (grid.CurrentCell is not null && rows.Contains(grid.CurrentCell.RowIndex)) grid.CurrentCell = grid[Math.Min(grid.CurrentCell.ColumnIndex, grid.ColumnCount - 1), next];
-        foreach (int row in rows) if (row < grid.RowCount) grid.Rows[row].Visible = false; UpdateStatus();
+        var rows = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => cell.RowIndex).Distinct().Where(row => row >= 0).ToList(); if (rows.Count == 0 || rows.Count >= primaryPane.View.DisplayRowCount) return;
+        var hiddenModel = rows.Select(ModelRow).ToHashSet();
+        primaryPane.View.HideRows(hiddenModel.Contains);
+        int next = Enumerable.Range(0, primaryPane.View.DisplayRowCount).FirstOrDefault(row => !hiddenModel.Contains(primaryPane.ModelRow(row))); if (grid.CurrentCell is not null && hiddenModel.Contains(ModelRow(grid.CurrentCell.RowIndex))) grid.CurrentCell = grid[Math.Min(grid.CurrentCell.ColumnIndex, grid.ColumnCount - 1), next];
+        primaryPane.ApplyView(); MirrorPrimaryRowVisibilityToSharedSecondary(); UpdateStatus();
     }
 
-    private void UnhideAllRows() { foreach (DataGridViewRow row in grid.Rows) row.Visible = true; filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; MirrorPrimaryRowVisibilityToSharedSecondary(); UpdateFindStatus(); UpdateStatus(); }
+    private void UnhideAllRows() { primaryPane.ResetViewToSheet(); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; MirrorPrimaryRowVisibilityToSharedSecondary(); UpdateFindStatus(); UpdateStatus(); }
 
     private void DeleteHiddenRows()
     {
-        var hidden = grid.Rows.Cast<DataGridViewRow>().Where(row => !row.Visible && row.Index < model.Rows.Count).Select(row => row.Index).OrderDescending().ToList(); if (hidden.Count == 0) return;
-        PushUndo(); model.DeleteRows(hidden); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; RenderSelect(Math.Min(hidden.Min(), model.Rows.Count - 1), 0);
+        var hidden = Enumerable.Range(0, model.Rows.Count).Except(primaryPane.View.VisibleRows).ToList(); if (hidden.Count == 0) return;
+        PushUndo(); model.DeleteRows(hidden.OrderDescending().ToList()); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; RenderSelect(Math.Min(hidden.Min(), model.Rows.Count - 1), 0);
     }
 
     private void HideSelectedColumns()
@@ -154,7 +156,7 @@ internal sealed partial class MainForm
     {
         var selected = grid.SelectedCells.Cast<DataGridViewCell>().ToList(); if (selected.Count == 0) return [];
         int top = selected.Min(cell => cell.RowIndex), bottom = selected.Max(cell => cell.RowIndex), left = selected.Min(cell => cell.ColumnIndex), right = selected.Max(cell => cell.ColumnIndex);
-        var matrix = new List<List<string>>(); for (int row = top; row <= bottom; row++) { var values = new List<string>(); for (int column = left; column <= right; column++) values.Add(grid[column, row].Selected ? EvaluatedCellValue(row, column) : ""); matrix.Add(values); }
+        var matrix = new List<List<string>>(); for (int row = top; row <= bottom; row++) { var values = new List<string>(); for (int column = left; column <= right; column++) values.Add(grid[column, row].Selected ? EvaluatedCellValue(ModelRow(row), column) : ""); matrix.Add(values); }
         while (matrix.Count > 1 && matrix[^1].All(string.IsNullOrEmpty)) matrix.RemoveAt(matrix.Count - 1);
         while (matrix.Count > 0 && matrix[0].Count > 1 && matrix.All(row => string.IsNullOrEmpty(row[^1]))) foreach (var row in matrix) row.RemoveAt(row.Count - 1); return matrix;
     }
@@ -197,7 +199,7 @@ internal sealed partial class MainForm
 
     private void PasteSpecial(List<List<string>> rows)
     {
-        if (rows.Count == 0 || grid.CurrentCell is null) return; PushUndo(); int startRow = grid.CurrentCell.RowIndex, startColumn = grid.CurrentCell.ColumnIndex, width = rows.Max(row => row.Count); EnsureGrid(startRow + rows.Count, startColumn + width); loading = true;
+        if (rows.Count == 0 || grid.CurrentCell is null) return; PushUndo(); int startRow = ModelRow(grid.CurrentCell.RowIndex), startColumn = grid.CurrentCell.ColumnIndex, width = rows.Max(row => row.Count); EnsureGrid(startRow + rows.Count, startColumn + width); loading = true;
         for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) model.SetCellValue(startRow + row, startColumn + column, rows[row][column]);
         loading = false; grid.Invalidate(); RecalculateFormulaCells(); SetDirty();
     }
@@ -281,17 +283,25 @@ internal sealed partial class MainForm
 
     private void ApplyHeaderValueFilter(int column, HashSet<string> values)
     {
-        if (column < 0 || column >= grid.ColumnCount) return; headerFilterColumn = column; headerFilterValues = new HashSet<string>(values, StringComparer.CurrentCultureIgnoreCase); headerFilterOperator = headerFilterConditionValue = null; filter = $"Values in {ColumnName(column)}"; int visible = 0;
+        if (column < 0 || column >= grid.ColumnCount) return; headerFilterColumn = column; headerFilterValues = new HashSet<string>(values, StringComparer.CurrentCultureIgnoreCase); headerFilterOperator = headerFilterConditionValue = null; filter = $"Values in {ColumnName(column)}";
         var context = FormulaEngine.CreateContext(model);
-        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0]; for (int row = 0; row < grid.RowCount; row++) { bool show = row == 0 || values.Contains(HeaderFilterValue(row, column, context)); grid.Rows[row].Visible = show; if (show && row > 0) visible++; }
+        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0];
+        primaryPane.ResetViewToSheet();
+        primaryPane.View.HideRows(row => row > 0 && !values.Contains(HeaderFilterValue(row, column, context)));
+        int visible = primaryPane.View.DisplayRowCount - 1;
+        primaryPane.ApplyView();
         MirrorPrimaryRowVisibilityToSharedSecondary(); countLabel.Text = $"{visible:N0} visible rows × {grid.ColumnCount:N0} columns"; grid.Invalidate(); UpdateFindStatus();
     }
 
     private void ApplyHeaderConditionFilter(int column, string op, string value)
     {
-        if (column < 0 || column >= grid.ColumnCount) return; headerFilterColumn = column; headerFilterValues = null; headerFilterOperator = op; headerFilterConditionValue = value; filter = $"{ColumnName(column)} {op}"; int visible = 0;
+        if (column < 0 || column >= grid.ColumnCount) return; headerFilterColumn = column; headerFilterValues = null; headerFilterOperator = op; headerFilterConditionValue = value; filter = $"{ColumnName(column)} {op}";
         var context = FormulaEngine.CreateContext(model);
-        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0]; for (int row = 0; row < grid.RowCount; row++) { bool show = row == 0 || FilterMatch(HeaderFilterValue(row, column, context), op, value); grid.Rows[row].Visible = show; if (show && row > 0) visible++; }
+        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0];
+        primaryPane.ResetViewToSheet();
+        primaryPane.View.HideRows(row => row > 0 && !FilterMatch(HeaderFilterValue(row, column, context), op, value));
+        int visible = primaryPane.View.DisplayRowCount - 1;
+        primaryPane.ApplyView();
         MirrorPrimaryRowVisibilityToSharedSecondary(); countLabel.Text = $"{visible:N0} visible rows × {grid.ColumnCount:N0} columns"; grid.Invalidate(); UpdateFindStatus();
     }
 }
