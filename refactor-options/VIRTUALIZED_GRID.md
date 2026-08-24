@@ -1,6 +1,6 @@
 # Refactor Option: Virtualized Spreadsheet Grid
 
-Status: In progress — Phase 1 complete (model-first editing), data-source/view-map groundwork landed  
+Status: In progress — Phase 1 complete, Phase 2 core complete (virtual mode live on both panes)  
 Priority: High for very large CSV/XLSX files  
 Scope: Worksheet storage, grid binding, sort/filter views, split view, clipboard, and undo/redo
 
@@ -8,12 +8,12 @@ Scope: Worksheet storage, grid binding, sort/filter views, split view, clipboard
 
 - `GridTypes.cs` — shared `CellAddress`, `CellRange`, `CellEdit`, and `CellDisplayValue` primitives (the old private nested `MainForm.CellRange` was replaced by the shared type).
 - `SheetModelOperations.cs` — model-first mutation APIs on `SheetModel` (`SetCell`, `SetCellValue`, `ReplaceCell`, `ClearRange`, `InsertRows/Columns`, `DeleteRows/Columns`, `SwapRows/Columns`, `ReorderRows`) plus a monotonic `Version` counter; formula-reference rewriting happens inside these APIs so callers cannot forget it.
-- `WorksheetDataSource.cs` — `IWorksheetDataSource`, the memoizing `SheetModelDataSource` (formula results cached per model version), and `WorksheetView` display↔model maps for filtering/sort previews. Not yet bound to a grid pane.
-- `SyncAll()`, `SyncCell()`, and `SyncSecondaryAll()` are deleted. Every edit commits through the model (`FinishCellEdit`, paste, clear, fill, find/replace, filters, formatting); saving, undo snapshots, sorting, SQL, and the shared secondary pane read only from models.
-- Find/Replace, filter matching, filter-by-value, and copy-as now read evaluated values from the model (`EvaluatedCellValue`) instead of grid display cells.
-- Tests: `tests/SheetLite.Core.Tests` — dependency-free runner covering the primitives, mutations, save/undo-from-model acceptance criteria, the data source, and view maps.
+- `WorksheetDataSource.cs` — `IWorksheetDataSource`, the memoizing `SheetModelDataSource` (formula results cached per model version), and `WorksheetView` display↔model maps for filtering/sort previews.
+- **Phase 2 core:** both `DataGridView`s run with `VirtualMode = true` and are bound to `SheetModelDataSource`. `CellValueNeeded` supplies evaluated text (raw formula source while that cell's editor is open), `CellValuePushed` commits edits straight into the model, and `CellFormatting` applies model colors/bold. `Render()`/`RenderSecondaryModel()` are O(columns): they build column definitions and assign `RowCount`; no per-cell UI objects are created. All former value/style copy loops (`ApplyCellCore`, `ApplySecondaryCell`, recalculate passes) are gone — edits invalidate cells/panes and paint recomputes through the version-keyed context. Row-header menus are applied via `RowTemplate`.
+- Saving, undo snapshots, sorting, SQL, find/replace, and filters read only from models (`SyncAll`/`SyncCell`/`SyncSecondaryAll` are deleted); pending editors are flushed via `EndEdit` at every command entry point that previously synced.
+- Tests: `tests/SheetLite.Core.Tests` — dependency-free runner covering primitives, mutations, save/undo-from-model acceptance criteria, the data source, and view maps. Virtual-mode behavior itself needs an interactive smoke pass (unit tests cannot drive WinForms painting/editing).
 
-Remaining: bind panes to `IWorksheetDataSource`, enable `DataGridView.VirtualMode`, replace row-visible flags with `WorksheetView`, then sparse storage and change-set undo.
+Remaining Phase 2 work: replace row-visible filter flags with `WorksheetView` maps. Then Phase 3 pane-controller consolidation, Phase 4 sparse storage/change-set undo, Phase 5 cleanup.
 
 ## Objective
 
@@ -155,10 +155,10 @@ Large pasted ranges may store compressed before/after blocks. Undo stacks should
 
 ### Phase 2: Primary-grid virtual mode
 
-- [x] Introduce `IWorksheetDataSource` and `WorksheetView` (landed; not yet bound to panes).
-- [ ] Enable `VirtualMode` on the primary grid.
-- [ ] Implement value, edit, and formatting callbacks.
-- [ ] Preserve selection, fill handle, frozen panes, headers, resizing, and context menus.
+- [x] Introduce `IWorksheetDataSource` and `WorksheetView`.
+- [x] Enable `VirtualMode` on the primary grid (secondary pane too).
+- [x] Implement value, edit, and formatting callbacks.
+- [x] Preserve selection, fill handle, frozen panes, headers, resizing, and context menus (interactive smoke pass still recommended).
 - [ ] Replace primary filtering and sorting with view maps.
 
 ### Phase 3: Split view

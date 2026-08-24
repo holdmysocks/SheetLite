@@ -353,6 +353,10 @@ internal sealed partial class MainForm
         secondaryGrid.ColumnHeadersDefaultCellStyle = new() { BackColor = Theme.HeaderBackground, ForeColor = Theme.Foreground, SelectionBackColor = Theme.Selection, SelectionForeColor = Theme.Purple, Alignment = DataGridViewContentAlignment.MiddleCenter }; secondaryGrid.RowHeadersDefaultCellStyle = new() { BackColor = Theme.HeaderBackground, ForeColor = Theme.Comment, SelectionBackColor = Theme.Selection, SelectionForeColor = Theme.Purple };
         secondaryGrid.AllowUserToAddRows = false; secondaryGrid.ReadOnly = false; secondaryGrid.RowTemplate.Height = 23; secondaryGrid.RowHeadersWidth = 50; secondaryGrid.RowHeadersVisible = true; secondaryGrid.ColumnHeadersHeight = 25; secondaryGrid.SelectionMode = DataGridViewSelectionMode.CellSelect; secondaryGrid.MultiSelect = true;
         secondaryGrid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
+        secondaryGrid.VirtualMode = true;
+        secondaryGrid.CellValueNeeded += SecondaryCellValueNeeded;
+        secondaryGrid.CellValuePushed += SecondaryCellValuePushed;
+        secondaryGrid.CellFormatting += SecondaryCellFormatting;
         secondaryScrollCorner.BackColor = Theme.Hover; secondaryScrollCorner.Size = new(SystemInformation.VerticalScrollBarWidth, SystemInformation.HorizontalScrollBarHeight); secondaryScrollCorner.Anchor = AnchorStyles.Right | AnchorStyles.Bottom; secondaryScrollCorner.Enabled = false;
         secondaryGrid.Controls.Add(secondaryScrollCorner); secondaryGrid.Resize += (_, _) => PositionScrollCorner(secondaryGrid, secondaryScrollCorner); secondaryGrid.HandleCreated += (_, _) => PositionScrollCorner(secondaryGrid, secondaryScrollCorner);
         secondaryGrid.CellPainting += PaintSecondaryHeader;
@@ -483,18 +487,18 @@ internal sealed partial class MainForm
             for (int row = source.Top; row <= source.Bottom; row++) { var pattern = Enumerable.Range(source.Left, source.Width).Select(column => secondaryModel.Rows[row][column].Clone()).ToList(); for (int column = source.Right + 1; column <= target.Right; column++) { int offset = column - source.Right - 1; SetSecondaryFilledCell(row, column, pattern, offset, row, source.Left + offset % source.Width); } }
         else if (target.Left < source.Left)
             for (int row = source.Top; row <= source.Bottom; row++) { var pattern = Enumerable.Range(source.Left, source.Width).Select(column => secondaryModel.Rows[row][column].Clone()).ToList(); for (int column = source.Left - 1; column >= target.Left; column--) { int offset = column - source.Left, patternIndex = Mod(offset, source.Width); SetSecondaryFilledCell(row, column, pattern, offset, row, source.Left + patternIndex); } }
-        secondaryLoading = false; RecalculateSecondaryFormulaCells(); secondaryGrid.ClearSelection();
+        secondaryLoading = false; RecalculateSecondaryFormulaCells(); secondaryGrid.ClearSelection(); secondaryGrid.Invalidate();
         for (int row = target.Top; row <= target.Bottom; row++) for (int column = target.Left; column <= target.Right; column++) secondaryGrid[column, row].Selected = true;
         if (secondarySharesPrimary)
         {
-            model = secondaryModel; loading = true; for (int row = target.Top; row <= target.Bottom; row++) for (int column = target.Left; column <= target.Right; column++) ApplyCell(row, column); loading = false; RecalculateFormulaCells(); SetDirty(); SetActivePane(true);
+            model = secondaryModel; RecalculateFormulaCells(); SetDirty(); SetActivePane(true);
         }
         else SetSecondaryDirty();
     }
 
     private void SetSecondaryFilledCell(int row, int column, List<CellModel> pattern, int offset, int sourceRow, int sourceColumn)
     {
-        if (secondaryModel is null) return; secondaryModel.Rows[row][column] = CreateFilledCell(pattern, offset, row, column, sourceRow, sourceColumn); ApplySecondaryCell(row, column);
+        if (secondaryModel is null) return; secondaryModel.ReplaceCell(row, column, CreateFilledCell(pattern, offset, row, column, sourceRow, sourceColumn)); secondaryGrid.InvalidateCell(column, row);
     }
 
     private void ShowFindBar(bool showReplace)
@@ -523,8 +527,8 @@ internal sealed partial class MainForm
         string term = findBox.Text; if (term.Length == 0) return; var context = FormulaEngine.CreateContext(model); int total = grid.RowCount * grid.ColumnCount; int current = grid.CurrentCell is null ? 0 : grid.CurrentCell.RowIndex * grid.ColumnCount + grid.CurrentCell.ColumnIndex;
         for (int n = 1; n <= total; n++) { int p = (current + (backwards ? -n : n) + total * 2) % total, r = p / grid.ColumnCount, c = p % grid.ColumnCount; if (grid.Rows[r].Visible && EvaluatedCellValue(r, c, context).Contains(term, StringComparison.CurrentCultureIgnoreCase)) { grid.CurrentCell = grid[c, r]; grid.ClearSelection(); grid[c, r].Selected = true; grid.FirstDisplayedScrollingRowIndex = Math.Max(0, r - 2); return; } }
     }
-    private void ReplaceCurrent() { if (grid.CurrentCell is null || findBox.Text.Length == 0) return; int row = grid.CurrentCell.RowIndex, column = grid.CurrentCell.ColumnIndex; if (row >= model.Rows.Count || column >= model.Rows[row].Count) { FindNext(false); return; } string value = MatchableCellValue(row, column); if (!value.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) { FindNext(false); return; } PushUndo(); string replaced = ReplaceInsensitive(value, findBox.Text, replaceBox.Text); model.SetCellValue(row, column, replaced); RecalculateFormulaCells(); ApplyCellCore(row, column, FormulaEngine.CreateContext(model)); ReapplyDockedFilterIfActive(); SetDirtyCell(row, column); UpdateFindStatus(); }
-    private void ReplaceAllDocked() { if (findBox.Text.Length == 0) return; var context = FormulaEngine.CreateContext(model); var matches = new List<(int Row, int Column)>(); for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) if (MatchableCellValue(r, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) matches.Add((r, c)); if (matches.Count == 0) { findStatus.Text = "No results"; return; } PushUndo(); var replacements = matches.Select(match => (match.Row, match.Column, Value: ReplaceInsensitive(MatchableCellValue(match.Row, match.Column, context), findBox.Text, replaceBox.Text))).ToList(); loading = true; foreach (var (row, column, value) in replacements) model.SetCellValue(row, column, value); loading = false; RecalculateFormulaCells(); foreach (var (row, column, _) in replacements) ApplyCellCore(row, column, context); ReapplyDockedFilterIfActive(); SetDirty(); findStatus.Text = $"Replaced {replacements.Count:N0}"; }
+    private void ReplaceCurrent() { if (grid.CurrentCell is null || findBox.Text.Length == 0) return; int row = grid.CurrentCell.RowIndex, column = grid.CurrentCell.ColumnIndex; if (row >= model.Rows.Count || column >= model.Rows[row].Count) { FindNext(false); return; } string value = MatchableCellValue(row, column); if (!value.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) { FindNext(false); return; } PushUndo(); string replaced = ReplaceInsensitive(value, findBox.Text, replaceBox.Text); model.SetCellValue(row, column, replaced); grid.InvalidateCell(column, row); ReapplyDockedFilterIfActive(); SetDirtyCell(row, column); UpdateFindStatus(); }
+    private void ReplaceAllDocked() { if (findBox.Text.Length == 0) return; var context = FormulaEngine.CreateContext(model); var matches = new List<(int Row, int Column)>(); for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) if (MatchableCellValue(r, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) matches.Add((r, c)); if (matches.Count == 0) { findStatus.Text = "No results"; return; } PushUndo(); var replacements = matches.Select(match => (match.Row, match.Column, Value: ReplaceInsensitive(MatchableCellValue(match.Row, match.Column, context), findBox.Text, replaceBox.Text))).ToList(); loading = true; foreach (var (row, column, value) in replacements) model.SetCellValue(row, column, value); loading = false; grid.Invalidate(); ReapplyDockedFilterIfActive(); SetDirty(); findStatus.Text = $"Replaced {replacements.Count:N0}"; }
 
     private void ShowFilterBar() { PopulateColumnTools(); filterBar.Visible = true; RefreshCommandHost(); filterValue.Focus(); }
     private void ToggleFilterBuilder() { filterBuilderExpanded = !filterBuilderExpanded; UpdateFilterBuilderControls(); LayoutFilterBar(); RefreshCommandHost(); }
@@ -742,7 +746,7 @@ internal sealed partial class MainForm
     private bool CloseSplitView()
     {
         if (!ConfirmAllSecondaryDocumentsClose()) return false;
-        SetActivePane(false); splitView.Panel2Collapsed = true; secondaryWorkbook = null; secondaryModel = null; secondaryPath = null; secondaryDirty = secondarySharesPrimary = false; secondaryDocuments.Clear(); secondaryDocumentIndex = 0; secondaryGrid.Rows.Clear(); secondaryGrid.Columns.Clear(); RefreshSecondarySheetTabs(); RefreshDocumentTabs(); UpdateSplitChrome(); return true;
+        SetActivePane(false); splitView.Panel2Collapsed = true; secondaryWorkbook = null; secondaryModel = null; secondaryPath = null; secondaryDirty = secondarySharesPrimary = false; secondaryDocuments.Clear(); secondaryDocumentIndex = 0; secondaryEditAddress = null; secondaryGrid.Columns.Clear(); RefreshSecondarySheetTabs(); RefreshDocumentTabs(); UpdateSplitChrome(); return true;
     }
 
     private void ToggleSqlConsole(bool? visible = null) { bool show = visible ?? !sqlPanel.Visible; sqlPanel.Visible = show; workspaceLayout.RowStyles[1].Height = show ? 300 : 0; if (show) { RefreshSqlSources(); sqlEditor.Focus(); } workspaceLayout.PerformLayout(); }
@@ -801,10 +805,11 @@ internal sealed partial class MainForm
         int firstRow = preserveViewport && secondaryGrid.RowCount > 0 ? Math.Max(0, secondaryGrid.FirstDisplayedScrollingRowIndex) : 0;
         int firstColumn = preserveViewport && secondaryGrid.ColumnCount > 0 ? Math.Max(0, secondaryGrid.FirstDisplayedScrollingColumnIndex) : 0;
         int currentRow = preserveViewport ? secondaryGrid.CurrentCell?.RowIndex ?? 0 : 0, currentColumn = preserveViewport ? secondaryGrid.CurrentCell?.ColumnIndex ?? 0 : 0;
-        secondaryLoading = true; secondaryGrid.Rows.Clear(); secondaryGrid.Columns.Clear(); int columns = Math.Max(26, secondaryModel.ColumnCount), rows = Math.Max(100, secondaryModel.Rows.Count); secondaryModel.EnsureSize(rows, columns);
-        for (int c = 0; c < columns; c++) secondaryGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = ColumnName(c), HeaderText = ColumnName(c), SortMode = DataGridViewColumnSortMode.NotSortable, Width = 110 }); secondaryGrid.Rows.Add(rows);
-        var formulaContext = FormulaEngine.CreateContext(secondaryModel);
-        for (int r = 0; r < secondaryModel.Rows.Count; r++) for (int c = 0; c < secondaryModel.Rows[r].Count; c++) ApplySecondaryCell(r, c, formulaContext);
+        FlushPendingEdits(secondaryGrid);
+        secondaryLoading = true; secondaryGrid.Columns.Clear();
+        int columns = Math.Max(26, secondaryModel.ColumnCount), rows = Math.Max(100, secondaryModel.Rows.Count); secondaryModel.EnsureSize(rows, columns);
+        for (int c = 0; c < columns; c++) secondaryGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = ColumnName(c), HeaderText = ColumnName(c), SortMode = DataGridViewColumnSortMode.NotSortable, Width = 110 });
+        secondaryGrid.RowCount = rows;
         ApplySecondaryFreeze(); secondaryLoading = false;
         if (secondaryGrid.RowCount > 0 && secondaryGrid.ColumnCount > 0)
         {
@@ -813,12 +818,31 @@ internal sealed partial class MainForm
         }
     }
 
-    private void ApplySecondaryCell(int row, int column, FormulaEngine.FormulaEvaluationContext? context = null)
+    /// <summary>Repaint pass: display values are recomputed lazily through the version-keyed data-source context.</summary>
+    private void RecalculateSecondaryFormulaCells() => secondaryGrid.Invalidate();
+
+    private void SecondaryCellValueNeeded(object? sender, DataGridViewCellValueEventArgs e)
     {
-        if (secondaryModel is null || row >= secondaryModel.Rows.Count || column >= secondaryModel.Rows[row].Count || row >= secondaryGrid.RowCount || column >= secondaryGrid.ColumnCount) return;
-        var source = secondaryModel.Rows[row][column]; var target = secondaryGrid[column, row]; target.Tag = null; target.Value = source.Value;
-        if (source.Value.TrimStart().StartsWith('=')) { var result = (context ?? FormulaEngine.CreateContext(secondaryModel)).Evaluate(row, column); target.Tag = source.Value; target.Value = result.Success ? result.Value : "#ERROR!"; }
-        target.Style.BackColor = source.BackColor ?? Theme.CellBackground; target.Style.ForeColor = source.ForeColor ?? Theme.Foreground; target.Style.Font = source.Bold ? boldCellFont : Font;
+        if (secondaryModel is null || e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= secondaryModel.RowCount || e.RowIndex >= secondaryModel.Rows.Count || e.ColumnIndex >= secondaryModel.Rows[e.RowIndex].Count) { e.Value = ""; return; }
+        var address = new CellAddress(e.RowIndex, e.ColumnIndex);
+        e.Value = secondaryEditAddress is { } editing && editing == address ? secondaryModel.GetRawValue(address.Row, address.Column) : secondarySource.GetEvaluatedText(address);
+    }
+
+    private void SecondaryCellValuePushed(object? sender, DataGridViewCellValueEventArgs e)
+    {
+        if (secondaryLoading || secondaryModel is null || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+        secondaryModel.SetCellValue(e.RowIndex, e.ColumnIndex, e.Value?.ToString() ?? "");
+        if (secondaryModel.IsFormula(e.RowIndex, e.ColumnIndex)) { var result = FormulaEngine.Evaluate(secondaryModel, e.RowIndex, e.ColumnIndex); typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error"; }
+        RecalculateSecondaryFormulaCells();
+        if (secondarySharesPrimary) { grid.Invalidate(); SetDirtyCell(e.RowIndex, e.ColumnIndex); }
+        else SetSecondaryDirty();
+    }
+
+    private void SecondaryCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (secondaryModel is null || e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= secondaryModel.RowCount || e.RowIndex >= secondaryModel.Rows.Count || e.ColumnIndex >= secondaryModel.Rows[e.RowIndex].Count) return;
+        CellDisplayValue display = secondarySource.GetDisplayValue(new(e.RowIndex, e.ColumnIndex));
+        e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor; e.CellStyle.Font = display.Bold ? boldCellFont : Font;
     }
 
     private void ApplySecondaryFreeze()
@@ -830,9 +854,9 @@ internal sealed partial class MainForm
     {
         if (!secondarySharesPrimary || splitView.Panel2Collapsed || secondaryLoading) return;
         secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path;
-        if (secondaryGrid.RowCount != Math.Max(100, model.Rows.Count) || secondaryGrid.ColumnCount != Math.Max(26, model.ColumnCount)) RenderSecondaryModel(preserveViewport: true);
-        else { secondaryLoading = true; var context = FormulaEngine.CreateContext(model); for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) ApplySecondaryCell(r, c, context); ApplySecondaryFreeze(); secondaryLoading = false; secondaryGrid.Invalidate(); }
-        MirrorPrimaryRowVisibilityToSharedSecondary();
+        int rows = Math.Max(100, model.RowCount), columns = Math.Max(26, model.ColumnCount);
+        if (secondaryGrid.RowCount != rows || secondaryGrid.ColumnCount != columns) RenderSecondaryModel(preserveViewport: true);
+        else { ApplySecondaryFreeze(); MirrorPrimaryRowVisibilityToSharedSecondary(); secondaryGrid.Invalidate(); }
         RefreshSecondarySheetTabs(); UpdateSecondaryTitle();
     }
 
@@ -840,12 +864,8 @@ internal sealed partial class MainForm
     {
         if (!secondarySharesPrimary || splitView.Panel2Collapsed || secondaryLoading) return;
         secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path;
-        if (secondaryGrid.RowCount != Math.Max(100, model.Rows.Count) || secondaryGrid.ColumnCount != Math.Max(26, model.ColumnCount)) { RenderSecondaryModel(preserveViewport: true); return; }
-        secondaryLoading = true; var context = FormulaEngine.CreateContext(model); ApplySecondaryCell(row, column, context);
-        for (int formulaRow = 0; formulaRow < model.Rows.Count; formulaRow++)
-        for (int formulaColumn = 0; formulaColumn < model.Rows[formulaRow].Count; formulaColumn++)
-            if ((formulaRow != row || formulaColumn != column) && model.Rows[formulaRow][formulaColumn].Value.TrimStart().StartsWith('=')) ApplySecondaryCell(formulaRow, formulaColumn, context);
-        secondaryLoading = false; secondaryGrid.Invalidate();
+        if (secondaryGrid.RowCount != Math.Max(100, model.RowCount) || secondaryGrid.ColumnCount != Math.Max(26, model.ColumnCount)) { RenderSecondaryModel(preserveViewport: true); return; }
+        secondaryGrid.Invalidate();
     }
 
     private void MirrorPrimaryRowVisibilityToSharedSecondary()
@@ -866,24 +886,15 @@ internal sealed partial class MainForm
     private void BeginSecondaryCellEdit(object? sender, DataGridViewCellCancelEventArgs e)
     {
         if (secondaryModel is null || secondaryLoading) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo();
-        string raw = secondaryModel.Rows[e.RowIndex][e.ColumnIndex].Value; if (raw.TrimStart().StartsWith('=')) { secondaryLoading = true; secondaryGrid[e.ColumnIndex, e.RowIndex].Value = raw; secondaryGrid[e.ColumnIndex, e.RowIndex].Tag = null; secondaryLoading = false; }
+        secondaryEditAddress = new CellAddress(e.RowIndex, e.ColumnIndex);
     }
 
     private void FinishSecondaryCellEdit(object? sender, DataGridViewCellEventArgs e)
     {
-        if (secondaryModel is null || secondaryLoading || e.RowIndex < 0 || e.ColumnIndex < 0) return;
-        string entered = secondaryGrid[e.ColumnIndex, e.RowIndex].Value?.ToString() ?? ""; secondaryModel.SetCellValue(e.RowIndex, e.ColumnIndex, entered);
-        secondaryLoading = true; ApplySecondaryCell(e.RowIndex, e.ColumnIndex); RecalculateSecondaryFormulaCells(); secondaryLoading = false;
-        if (secondarySharesPrimary)
-        {
-            model = secondaryModel; loading = true; ApplyCell(e.RowIndex, e.ColumnIndex); loading = false; RecalculateFormulaCells(); SetDirtyCell(e.RowIndex, e.ColumnIndex);
-        }
-        else SetSecondaryDirty();
-    }
-
-    private void RecalculateSecondaryFormulaCells()
-    {
-        if (secondaryModel is null) return; var context = FormulaEngine.CreateContext(secondaryModel); for (int r = 0; r < secondaryModel.Rows.Count && r < secondaryGrid.RowCount; r++) for (int c = 0; c < secondaryModel.Rows[r].Count && c < secondaryGrid.ColumnCount; c++) if (secondaryModel.Rows[r][c].Value.TrimStart().StartsWith('=')) ApplySecondaryCell(r, c, context);
+        secondaryEditAddress = null;
+        if (secondaryLoading || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+        secondaryGrid.InvalidateCell(e.ColumnIndex, e.RowIndex);
+        UpdateStatus();
     }
 
     private void SetSecondaryDirty() { secondaryDirty = true; CaptureSecondaryDocument(); RefreshDocumentTabs(); UpdateFileTabChrome(); UpdateStatus(); }
@@ -902,14 +913,14 @@ internal sealed partial class MainForm
         if (secondaryModel is null || secondaryGrid.CurrentCell is null || !Clipboard.ContainsText()) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo();
         string[][] rows = Clipboard.GetText().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Select(line => line.Split('\t')).ToArray(); int startRow = secondaryGrid.CurrentCell.RowIndex, startColumn = secondaryGrid.CurrentCell.ColumnIndex;
         secondaryModel.EnsureSize(startRow + rows.Length, startColumn + rows.Max(row => row.Length)); if (secondaryGrid.RowCount < secondaryModel.Rows.Count || secondaryGrid.ColumnCount < secondaryModel.ColumnCount) RenderSecondaryModel(preserveViewport: true);
-        secondaryLoading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) secondaryModel.SetCellValue(startRow + r, startColumn + c, rows[r][c]); RecalculateSecondaryFormulaCells(); for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) ApplySecondaryCell(startRow + r, startColumn + c); secondaryLoading = false;
+        secondaryLoading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) secondaryModel.SetCellValue(startRow + r, startColumn + c, rows[r][c]); secondaryLoading = false; RecalculateSecondaryFormulaCells();
         if (secondarySharesPrimary) { model = secondaryModel; Render(); SetDirty(); SetActivePane(true); } else SetSecondaryDirty();
     }
     private void SecondaryDeleteContents()
     {
         if (secondaryModel is null || secondaryGrid.SelectedCells.Count == 0) return; if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo(); secondaryLoading = true;
-        foreach (DataGridViewCell cell in secondaryGrid.SelectedCells) { secondaryModel.SetCellValue(cell.RowIndex, cell.ColumnIndex, ""); cell.Value = ""; cell.Tag = null; } RecalculateSecondaryFormulaCells(); secondaryLoading = false;
-        if (secondarySharesPrimary) { model = secondaryModel; loading = true; foreach (DataGridViewCell cell in secondaryGrid.SelectedCells) ApplyCell(cell.RowIndex, cell.ColumnIndex); loading = false; RecalculateFormulaCells(); SetDirty(); } else SetSecondaryDirty();
+        foreach (DataGridViewCell cell in secondaryGrid.SelectedCells) secondaryModel.SetCellValue(cell.RowIndex, cell.ColumnIndex, ""); secondaryGrid.Invalidate(); RecalculateSecondaryFormulaCells(); secondaryLoading = false;
+        if (secondarySharesPrimary) { model = secondaryModel; grid.Invalidate(); RecalculateFormulaCells(); SetDirty(); } else SetSecondaryDirty();
     }
 
     private void SaveSecondary() { if (secondaryPath is null || !File.Exists(secondaryPath)) SaveSecondaryAs(); else TrySaveSecondaryTo(secondaryPath); }

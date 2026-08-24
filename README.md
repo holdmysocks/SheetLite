@@ -166,6 +166,7 @@ SheetLite/
 
 - `WorkbookModel`/`SheetModel` hold immutable-ish cell data; the engines (`FormulaEngine`, `SqlQueryEngine`) operate directly on models so they stay unit-testable and UI-free.
 - Editing is model-first: every cell or structural change goes through `SheetModel`'s mutation APIs (`SheetModelOperations.cs`), bumping a version counter; saving, undo snapshots, sorting, filtering, find/replace, and SQL all read from models, never from grid cells. There is no grid-to-model synchronization pass.
+- Both grids run in `DataGridView.VirtualMode`: rendering builds columns and assigns `RowCount` (O(columns), no per-cell UI objects), `CellValueNeeded` computes display text through the version-memoized `SheetModelDataSource`, edits commit via `CellValuePushed`, and styles come from model formatting in `CellFormatting`.
 - `FormulaEvaluationContext` memoizes cell results within one recalculation batch and detects cycles; render paths share a single context per pass, and `SheetModelDataSource` caches one context per model version for future virtual-mode panes.
 - Undo/redo is snapshot-based (`Stack<WorkbookModel>`), with independent secondary stacks for right-pane documents.
 - All destructive keyboard commands route through a single router (`ProcessCmdKey`) that respects overlay/focus state.
@@ -181,7 +182,7 @@ SheetLite/
 ## Roadmap
 
 1. Dependency-graph formula engine (incremental recalculation, reusable syntax trees, typed errors, cross-sheet references).
-2. Virtualized grid for very large CSV/XLSX files — Phase 1 (model-first editing, no `SyncAll`) is done; next step is binding panes to `IWorksheetDataSource` and enabling virtual mode. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
+2. Virtualized grid for very large CSV/XLSX files — Phases 1–2 core are done (model-first editing; both panes run in virtual mode bound to `IWorksheetDataSource`). Remaining: view-map filters/sorts, pane-controller consolidation, sparse storage, change-set undo. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
 3. Address residual findings from Round 3 of the code reviews (e.g., shortcuts that still target the left pane with two independent files).
 
 ## Privacy and portability

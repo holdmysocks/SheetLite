@@ -198,8 +198,8 @@ internal sealed partial class MainForm
     private void PasteSpecial(List<List<string>> rows)
     {
         if (rows.Count == 0 || grid.CurrentCell is null) return; PushUndo(); int startRow = grid.CurrentCell.RowIndex, startColumn = grid.CurrentCell.ColumnIndex, width = rows.Max(row => row.Count); EnsureGrid(startRow + rows.Count, startColumn + width); loading = true;
-        for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) { model.SetCellValue(startRow + row, startColumn + column, rows[row][column]); grid[startColumn + column, startRow + row].Tag = null; grid[startColumn + column, startRow + row].Value = rows[row][column]; }
-        loading = false; RecalculateFormulaCells(); SetDirty();
+        for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) model.SetCellValue(startRow + row, startColumn + column, rows[row][column]);
+        loading = false; grid.Invalidate(); RecalculateFormulaCells(); SetDirty();
     }
 
     private static List<List<string>> ParseDelimitedText(string text)

@@ -39,6 +39,8 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripStatusLabel positionLabel = new(), countLabel = new(), typeLabel = new(), dirtyLabel = new();
     private WorkbookModel workbook = WorkbookModel.CreateBlank();
     private SheetModel model;
+    private readonly SheetModelDataSource primarySource, secondarySource;
+    private CellAddress? primaryEditAddress, secondaryEditAddress;
     private Stack<WorkbookModel> undo = new(), redo = new();
     private string? path;
     private bool dirty, loading;
@@ -47,6 +49,8 @@ internal sealed partial class MainForm : Form
     public MainForm(string? initialPath)
     {
         model = workbook.ActiveSheet.Sheet;
+        primarySource = new(() => model);
+        secondarySource = new(() => secondaryModel ?? model);
         InitializeDocumentSessions();
         resizeCursorFilter = new ResizeCursorMessageFilter(this); Application.AddMessageFilter(resizeCursorFilter);
         Text = ""; AccessibleName = "SheetLite"; ShowIcon = false; Width = 1200; Height = 760; MinimumSize = new(720, 450); StartPosition = FormStartPosition.CenterScreen; FormBorderStyle = FormBorderStyle.None; Padding = new Padding(1);
@@ -410,6 +414,10 @@ internal sealed partial class MainForm : Form
         grid.DefaultCellStyle = new() { BackColor = Theme.CellBackground, ForeColor = Theme.Foreground, SelectionBackColor = Theme.Selection, SelectionForeColor = Theme.Foreground, NullValue = "", Font = Font };
         grid.RowTemplate.Height = 23; grid.ColumnHeadersHeight = 25; grid.RowHeadersWidth = 58; grid.AllowUserToAddRows = false; grid.AllowUserToDeleteRows = false;
         grid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText; grid.SelectionMode = DataGridViewSelectionMode.CellSelect; grid.MultiSelect = true;
+        grid.VirtualMode = true;
+        grid.CellValueNeeded += PrimaryCellValueNeeded;
+        grid.CellValuePushed += PrimaryCellValuePushed;
+        grid.CellFormatting += PrimaryCellFormatting;
         grid.CellValueChanged += (_, e) => { if (!loading && !cellEditing && e.RowIndex >= 0) SetDirtyCell(e.RowIndex, e.ColumnIndex); };
         grid.CurrentCellChanged += (_, _) => { if (!cellEditing) HideEditOutline(); UpdateStatus(); grid.Invalidate(); }; grid.SelectionChanged += (_, _) => { NormalizeDragSelection(); UpdateStatus(); grid.Invalidate(); };
         grid.Enter += (_, _) => SetActivePane(false); grid.MouseDown += (_, _) => SetActivePane(false);
@@ -498,30 +506,43 @@ internal sealed partial class MainForm : Form
     private void BeginCellEdit(object? sender, DataGridViewCellCancelEventArgs e)
     {
         PushUndo();
-        var cell = grid[e.ColumnIndex, e.RowIndex];
-        if (cell.Tag is string formula)
-        {
-            loading = true; cell.Value = formula; cell.Tag = null; loading = false;
-        }
+        primaryEditAddress = new CellAddress(e.RowIndex, e.ColumnIndex);
         cellEditing = true; grid.Invalidate(); BeginInvoke(() => { UpdateEditOutline(); grid.Invalidate(); });
     }
 
     private void FinishCellEdit(object? sender, DataGridViewCellEventArgs e)
     {
-        var cell = grid[e.ColumnIndex, e.RowIndex]; string entered = cell.Value?.ToString() ?? "";
-        model.SetCellValue(e.RowIndex, e.ColumnIndex, entered);
-        loading = true; cell.Tag = null;
-        if (entered.TrimStart().StartsWith('=')) { var result = FormulaEngine.Evaluate(model, e.RowIndex, e.ColumnIndex); cell.Tag = entered; cell.Value = result.Success ? result.Value : "#ERROR!"; typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error"; }
-        loading = false; cellEditing = false; HideEditOutline(); RecalculateFormulaCells(); SetDirtyCell(e.RowIndex, e.ColumnIndex); UpdateStatus(); grid.Invalidate();
+        primaryEditAddress = null;
+        cellEditing = false; HideEditOutline();
+        if (e.RowIndex >= 0 && e.ColumnIndex >= 0) grid.InvalidateCell(e.ColumnIndex, e.RowIndex);
+        UpdateStatus(); grid.Invalidate();
     }
 
-    private void RecalculateFormulaCells()
+    private void PrimaryCellValueNeeded(object? sender, DataGridViewCellValueEventArgs e)
     {
-        loading = true; var context = FormulaEngine.CreateContext(model);
-        for (int r = 0; r < model.Rows.Count && r < grid.RowCount; r++) for (int c = 0; c < model.Rows[r].Count && c < grid.ColumnCount; c++)
-            if (model.Rows[r][c].Value.TrimStart().StartsWith('=')) { var result = context.Evaluate(r, c); grid[c, r].Tag = model.Rows[r][c].Value; grid[c, r].Value = result.Success ? result.Value : "#ERROR!"; }
-        loading = false;
+        if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= model.RowCount || e.RowIndex >= model.Rows.Count || e.ColumnIndex >= model.Rows[e.RowIndex].Count) { e.Value = ""; return; }
+        var address = new CellAddress(e.RowIndex, e.ColumnIndex);
+        // While a cell is being edited the editor must show the raw source (formula text), not the evaluated result.
+        e.Value = primaryEditAddress is { } editing && editing == address ? model.GetRawValue(address.Row, address.Column) : primarySource.GetEvaluatedText(address);
     }
+
+    private void PrimaryCellValuePushed(object? sender, DataGridViewCellValueEventArgs e)
+    {
+        if (loading || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+        model.SetCellValue(e.RowIndex, e.ColumnIndex, e.Value?.ToString() ?? "");
+        if (model.IsFormula(e.RowIndex, e.ColumnIndex)) { var result = FormulaEngine.Evaluate(model, e.RowIndex, e.ColumnIndex); typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error"; }
+        RecalculateFormulaCells(); SetDirtyCell(e.RowIndex, e.ColumnIndex);
+    }
+
+    private void PrimaryCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= model.RowCount || e.RowIndex >= model.Rows.Count || e.ColumnIndex >= model.Rows[e.RowIndex].Count) return;
+        CellDisplayValue display = primarySource.GetDisplayValue(new(e.RowIndex, e.ColumnIndex));
+        e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor; e.CellStyle.Font = display.Bold ? boldCellFont : Font;
+    }
+
+    /// <summary>Repaint pass: display values are recomputed lazily through the version-keyed data-source context.</summary>
+    private void RecalculateFormulaCells() => grid.Invalidate();
 
     private void SelectHeaderRange(object? sender, DataGridViewCellMouseEventArgs e)
     {
@@ -758,7 +779,7 @@ internal sealed partial class MainForm : Form
     private void SetFilledCell(int row, int column, List<CellModel> pattern, int offset, int sourceRow, int sourceColumn)
     {
         var cell = CreateFilledCell(pattern, offset, row, column, sourceRow, sourceColumn);
-        model.ReplaceCell(row, column, cell); ApplyCell(row, column);
+        model.ReplaceCell(row, column, cell); grid.InvalidateCell(column, row);
     }
 
     private static CellModel CreateFilledCell(List<CellModel> pattern, int offset, int row, int column, int sourceRow, int sourceColumn)
@@ -814,26 +835,14 @@ internal sealed partial class MainForm : Form
 
     private void Render()
     {
-        loading = true; grid.Rows.Clear(); grid.Columns.Clear(); int columns = Math.Max(26, model.ColumnCount); int rows = Math.Max(100, model.Rows.Count); model.EnsureSize(rows, columns);
+        FlushPendingEdits(grid);
+        loading = true; grid.Columns.Clear();
+        int columns = Math.Max(26, model.ColumnCount); int rows = Math.Max(100, model.Rows.Count); model.EnsureSize(rows, columns);
         for (int c = 0; c < columns; c++) { var column = new DataGridViewTextBoxColumn { Name = ColumnName(c), HeaderText = ColumnName(c), SortMode = DataGridViewColumnSortMode.NotSortable, Width = 110 }; column.HeaderCell.ContextMenuStrip = columnMenu; grid.Columns.Add(column); }
-        grid.Rows.Add(rows);
-        foreach (DataGridViewRow row in grid.Rows) row.HeaderCell.ContextMenuStrip = rowMenu;
-        var formulaContext = FormulaEngine.CreateContext(model);
-        for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) ApplyCellCore(r, c, formulaContext);
+        grid.RowTemplate.HeaderCell.ContextMenuStrip = rowMenu;
+        grid.RowCount = rows;
         ApplyFreeze(); loading = false; if (grid.RowCount > 0 && grid.ColumnCount > 0) grid.CurrentCell = grid[0, 0]; ReapplyDockedFilterIfActive(); RefreshSharedSecondaryFromModel(); UpdateStatus();
     }
-    private void ApplyCell(int r, int c)
-        => ApplyCellCore(r, c, null);
-
-    private void ApplyCellCore(int r, int c, FormulaEngine.FormulaEvaluationContext? context)
-    {
-        if (r >= grid.RowCount || c >= grid.ColumnCount) return;
-        var source = model.GetCell(r, c); var target = grid[c, r]; target.Value = source.Value;
-        target.Tag = null;
-        if (source.Value.TrimStart().StartsWith('=')) { var result = (context ?? FormulaEngine.CreateContext(model)).Evaluate(r, c); target.Value = result.Success ? result.Value : "#ERROR!"; target.Tag = source.Value; }
-        target.Style.BackColor = source.BackColor ?? Theme.CellBackground; target.Style.ForeColor = source.ForeColor ?? Theme.Foreground; target.Style.Font = source.Bold ? boldCellFont : Font;
-    }
-
     private void PushUndo() { if (loading) return; FlushPendingEdits(grid); if (sortBaselineWorkbook is not null && sortPreviewApplied) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); if (undo.Count > 40) { var keep = undo.Take(40).Reverse().ToArray(); undo.Clear(); foreach (var x in keep) undo.Push(x); } redo.Clear(); }
     private void Undo()
     {
@@ -859,10 +868,10 @@ internal sealed partial class MainForm : Form
     {
         if (grid.CurrentCell is null || !Clipboard.ContainsText()) return; PushUndo(); string[][] rows = Clipboard.GetText().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Select(x => x.Split('\t')).ToArray();
         int sr = grid.CurrentCell.RowIndex, sc = grid.CurrentCell.ColumnIndex; EnsureGrid(sr + rows.Length, sc + rows.Max(x => x.Length));
-        loading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) { string value = rows[r][c]; model.SetCellValue(sr + r, sc + c, value); grid[sc + c, sr + r].Value = value; grid[sc + c, sr + r].Tag = null; } loading = false; RecalculateFormulaCells(); SetDirty();
+        loading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) model.SetCellValue(sr + r, sc + c, rows[r][c]); loading = false; grid.Invalidate(); RecalculateFormulaCells(); SetDirty();
     }
     private void DeleteContents() => DeleteContents(true);
-    private void DeleteContents(bool snapshot) { if (snapshot) PushUndo(); loading = true; foreach (DataGridViewCell cell in grid.SelectedCells) { cell.Value = ""; cell.Tag = null; model.SetCellValue(cell.RowIndex, cell.ColumnIndex, ""); } loading = false; RecalculateFormulaCells(); ReapplyDockedFilterIfActive(); SetDirty(); }
+    private void DeleteContents(bool snapshot) { if (snapshot) PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCellValue(cell.RowIndex, cell.ColumnIndex, ""); grid.Invalidate(); RecalculateFormulaCells(); ReapplyDockedFilterIfActive(); SetDirty(); }
 
     private void InsertRow() { int index = grid.CurrentCell?.RowIndex ?? 0; PushUndo(); model.InsertRows(index); RenderSelect(index, grid.CurrentCell?.ColumnIndex ?? 0); }
     private void InsertRowBelow() { int index = grid.SelectedCells.Count > 0 ? grid.SelectedCells.Cast<DataGridViewCell>().Max(c => c.RowIndex) + 1 : (grid.CurrentCell?.RowIndex ?? 0) + 1; index = Math.Min(index, model.Rows.Count); PushUndo(); model.InsertRows(index); RenderSelect(Math.Min(index, model.Rows.Count - 1), grid.CurrentCell?.ColumnIndex ?? 0); }
@@ -944,9 +953,9 @@ internal sealed partial class MainForm : Form
 
     private void SetBackground() => PickColor(true);
     private void SetForeground() => PickColor(false);
-    private void PickColor(bool background) { using var d = new ColorDialog { FullOpen = true, Color = background ? Theme.Purple : Theme.Foreground }; if (d.ShowDialog(this) != DialogResult.OK) return; PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { var address = new CellAddress(cell.RowIndex, cell.ColumnIndex); model.SetCell(address, CellEdit.Format(background ? d.Color : null, background ? null : d.Color)); if (background) cell.Style.BackColor = d.Color; else cell.Style.ForeColor = d.Color; } SetDirty(); }
-    private void ToggleBold() { if (grid.SelectedCells.Count == 0) return; PushUndo(); bool makeBold = grid.CurrentCell?.Style.Font?.Bold != true; foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(cell.RowIndex, cell.ColumnIndex), CellEdit.Format(bold: makeBold)); cell.Style.Font = makeBold ? boldCellFont : Font; } SetDirty(); }
-    private void ClearFormatting() { PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(cell.RowIndex, cell.ColumnIndex), CellEdit.ResetFormatting()); cell.Style.BackColor = Theme.CellBackground; cell.Style.ForeColor = Theme.Foreground; cell.Style.Font = Font; } SetDirty(); }
+    private void PickColor(bool background) { using var d = new ColorDialog { FullOpen = true, Color = background ? Theme.Purple : Theme.Foreground }; if (d.ShowDialog(this) != DialogResult.OK) return; PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { var address = new CellAddress(cell.RowIndex, cell.ColumnIndex); model.SetCell(address, CellEdit.Format(background ? d.Color : null, background ? null : d.Color)); } SetDirty(); }
+    private void ToggleBold() { if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null) return; PushUndo(); bool makeBold = !model.GetCell(grid.CurrentCell.RowIndex, grid.CurrentCell.ColumnIndex).Bold; foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCell(new CellAddress(cell.RowIndex, cell.ColumnIndex), CellEdit.Format(bold: makeBold)); grid.Invalidate(); SetDirty(); }
+    private void ClearFormatting() { PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(cell.RowIndex, cell.ColumnIndex), CellEdit.ResetFormatting()); } grid.Invalidate(); SetDirty(); }
     private void AutoSizeColumns() { foreach (int c in grid.SelectedCells.Cast<DataGridViewCell>().Select(x => x.ColumnIndex).Distinct()) grid.Columns[c].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells; BeginInvoke(() => { foreach (DataGridViewColumn c in grid.Columns) if (c.AutoSizeMode != DataGridViewAutoSizeColumnMode.None) { int w = Math.Min(c.Width, 400); c.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; c.Width = w; } }); }
 
     private void EnsureGrid(int rows, int columns) { if (rows <= grid.RowCount && columns <= grid.ColumnCount) return; FlushPendingEdits(grid); model.EnsureSize(Math.Max(rows, grid.RowCount), Math.Max(columns, grid.ColumnCount)); Render(); }
@@ -982,22 +991,27 @@ internal sealed partial class MainForm : Form
         int visible = activeGrid.Rows.Cast<DataGridViewRow>().Count(r => r.Visible); countLabel.Text = $"{visible:N0} rows × {activeGrid.ColumnCount:N0} columns";
         dirtyLabel.Text = secondary ? (secondarySharesPrimary ? (dirty ? "  Modified " : "  Saved ") : (secondaryDirty ? "  Modified " : "  Saved ")) : dirty ? "  Modified " : "  Saved ";
         if (activeGrid.CurrentCell is null) { positionLabel.Text = ""; typeLabel.Text = ""; return; }
+        SheetModel? activeModel = secondary ? secondaryModel : model;
         var selected = activeGrid.SelectedCells.Cast<DataGridViewCell>().ToList();
         if (selected.Count > 1)
         {
             int top = selected.Min(c => c.RowIndex), bottom = selected.Max(c => c.RowIndex), left = selected.Min(c => c.ColumnIndex), right = selected.Max(c => c.ColumnIndex);
-            int characters = selected.Sum(c => (c.Value?.ToString() ?? "").Length); positionLabel.Text = $" {ColumnName(left)}{top + 1}:{ColumnName(right)}{bottom + 1}"; typeLabel.Text = $"{selected.Count:N0} cells · {characters:N0} chars";
+            int characters = selected.Sum(c => (activeModel?.EvaluatedValue(c.RowIndex, c.ColumnIndex) ?? "").Length); positionLabel.Text = $" {ColumnName(left)}{top + 1}:{ColumnName(right)}{bottom + 1}"; typeLabel.Text = $"{selected.Count:N0} cells · {characters:N0} chars";
         }
         else
         {
-            positionLabel.Text = $" {ColumnName(activeGrid.CurrentCell.ColumnIndex)}{activeGrid.CurrentCell.RowIndex + 1}"; string value = activeGrid.CurrentCell.Value?.ToString() ?? "";
-            if (activeGrid.CurrentCell.Tag is string formula && formula.TrimStart().StartsWith('='))
+            int row = activeGrid.CurrentCell.RowIndex, column = activeGrid.CurrentCell.ColumnIndex;
+            positionLabel.Text = $" {ColumnName(column)}{row + 1}";
+            if (activeModel is not null && activeModel.IsFormula(row, column))
             {
-                SheetModel? activeModel = secondary ? secondaryModel : model;
-                FormulaResult result = activeModel is null ? new(false, "", "Formula error") : FormulaEngine.Evaluate(activeModel, activeGrid.CurrentCell.RowIndex, activeGrid.CurrentCell.ColumnIndex);
+                FormulaResult result = FormulaEngine.Evaluate(activeModel, row, column);
                 typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error";
             }
-            else typeLabel.Text = double.TryParse(value, out _) ? "Number" : DateTime.TryParse(value, out _) ? "Date" : bool.TryParse(value, out _) ? "Boolean" : string.IsNullOrEmpty(value) ? "Empty" : $"Text · {value.Length:N0} chars";
+            else
+            {
+                string value = activeModel?.GetRawValue(row, column) ?? "";
+                typeLabel.Text = double.TryParse(value, out _) ? "Number" : DateTime.TryParse(value, out _) ? "Date" : bool.TryParse(value, out _) ? "Boolean" : string.IsNullOrEmpty(value) ? "Empty" : $"Text · {value.Length:N0} chars";
+            }
         }
     }
     private bool ConfirmLoseChanges()
