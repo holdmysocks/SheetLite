@@ -2,7 +2,7 @@
 
 A fast, portable CSV and XLSX workbook editor for Windows, built with WinForms on .NET 9.
 
-![GitHub Release](https://img.shields.io/github/v/release/holdmysocks/SheetLite?label=version) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
+![GitHub Release](https://img.shields.io/github/v/release/holdmysocks/SheetLite?label=version) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple) ![License](https://img.shields.io/github/license/holdmysocks/SheetLite)
 
 SheetLite is distributed as a single self-contained executable. It has no installer, requires no separate .NET runtime, stores no recent-file history, and sends no telemetry. On startup it makes one request to GitHub Releases to check whether a newer version is available.
 
@@ -78,4 +78,4 @@ tests/SheetLite.Core.Tests/      Dependency-free test suite
 
 ## License
 
-No license file is currently included. Unless the repository owner adds one, normal copyright restrictions apply.
+SheetLite is licensed under the [GNU General Public License v3.0](LICENSE).
