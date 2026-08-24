@@ -24,6 +24,10 @@
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="SheetLite.Core.Tests" />
+    <Compile Remove="tests\**" />
+  </ItemGroup>
+  <ItemGroup>
     <EmbeddedResource Include="Assets\sheetlite-icon.png" />
     <EmbeddedResource Include="Assets\window-minimize.png" />
     <EmbeddedResource Include="Assets\window-maximize.png" />

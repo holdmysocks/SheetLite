@@ -163,7 +163,7 @@ internal sealed partial class MainForm
 
         if (secondary && !splitView.Panel2Collapsed && !secondarySharesPrimary)
         {
-            if (secondaryWorkbook is null) return; SyncSecondaryAll(); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!;
+            if (secondaryWorkbook is null) return; secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!;
             int previous = secondaryWorkbook.ActiveSheetIndex, first = AppendImportedSheets(secondaryWorkbook, imports); secondaryWorkbook.ActiveSheetIndex = focusImported ? first : previous; secondaryModel = secondaryWorkbook.ActiveSheet.Sheet;
             RenderSecondaryModel(); RefreshSecondarySheetTabs(); SetSecondaryDirty(); SetActivePane(true);
         }
@@ -238,7 +238,7 @@ internal sealed partial class MainForm
             if (sourcePrimary || targetPrimary) PushUndo();
             if (!sourcePrimary || !targetPrimary) PushSecondaryUndo();
         }
-        if (!secondarySharesPrimary && secondaryWorkbook is not null && (source == secondaryWorkbook || target == secondaryWorkbook)) { SyncSecondaryAll(); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!; }
+        if (!secondarySharesPrimary && secondaryWorkbook is not null && (source == secondaryWorkbook || target == secondaryWorkbook)) { secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!; }
 
         if (ReferenceEquals(source, target))
         {
@@ -302,7 +302,7 @@ internal sealed partial class MainForm
         ResolveSortPreviewBeforePrimaryDocumentChange();
         List<PaneDocumentSession> source = sourcePrimary ? primaryDocuments : secondaryDocuments;
         if (sourceIndex < 0 || sourceIndex >= source.Count) return;
-        if (sourcePrimary) { SyncAll(); CapturePrimaryDocument(); } else { SyncSecondaryAll(); CaptureSecondaryDocument(); }
+        if (sourcePrimary) { CapturePrimaryDocument(); } else { CaptureSecondaryDocument(); }
         if (!targetPrimary && secondarySharesPrimary) { secondarySharesPrimary = false; secondaryDocuments.Clear(); }
         List<PaneDocumentSession> target = targetPrimary ? primaryDocuments : secondaryDocuments;
 

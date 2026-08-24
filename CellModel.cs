@@ -9,7 +9,7 @@ internal sealed class CellModel
     public CellModel Clone() => new() { Value = Value, BackColor = BackColor, ForeColor = ForeColor, Bold = Bold };
 }
 
-internal sealed class SheetModel
+internal sealed partial class SheetModel
 {
     public List<List<CellModel>> Rows { get; } = [];
     public int FrozenRows { get; set; }

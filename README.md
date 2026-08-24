@@ -90,6 +90,16 @@ dotnet build -c Release
 dotnet run -c Release
 ```
 
+### Run the tests
+
+The core model, primitives, data source, and view maps are covered by a dependency-free test runner (no NuGet packages needed):
+
+```powershell
+dotnet run --project tests/SheetLite.Core.Tests -c Release
+```
+
+The suite exits non-zero when a test fails, so it can be used in scripts or CI.
+
 ### Publish a single-file executable
 
 The project is preconfigured for a compressed, self-contained, ReadyToRun single-file build:
@@ -134,6 +144,9 @@ SheetLite/
 ├── MainForm.HeaderMenus.cs       # Row/column/cell header context menus
 ├── MainForm.DragDrop.cs          # File drop zones and import targets
 ├── CellModel.cs                  # Cell/Sheet/Workbook models (no UI dependencies)
+├── SheetModelOperations.cs       # Model-first mutation APIs + change versioning for SheetModel
+├── GridTypes.cs                  # CellAddress / CellRange / CellEdit / display-value primitives
+├── WorksheetDataSource.cs        # IWorksheetDataSource, memoizing SheetModelDataSource, WorksheetView
 ├── DocumentTab.cs                # Custom workbook tab control
 ├── ColumnFilterPopup.cs          # Per-column value/condition filter card
 ├── CsvCodec.cs                   # Delimited-text parse/serialize with delimiter detection
@@ -144,6 +157,7 @@ SheetLite/
 ├── Theme.cs / NativeTheme.cs     # Dracula palette, renderers, dark title bar integration
 ├── UiIcons.cs / HelpContent.cs   # Embedded icons and in-app help text
 ├── Assets/                       # App icon, titlebar glyphs, embedded resources
+├── tests/SheetLite.Core.Tests    # Dependency-free test runner for models, primitives, data source
 ├── CODE_REVIEW*.md               # Three rounds of full-source code review documents
 └── refactor-options/             # Proposed large refactors with detailed designs
 ```
@@ -151,7 +165,8 @@ SheetLite/
 ### Architecture notes
 
 - `WorkbookModel`/`SheetModel` hold immutable-ish cell data; the engines (`FormulaEngine`, `SqlQueryEngine`) operate directly on models so they stay unit-testable and UI-free.
-- `FormulaEvaluationContext` memoizes cell results within one recalculation batch and detects cycles; render paths share a single context per pass.
+- Editing is model-first: every cell or structural change goes through `SheetModel`'s mutation APIs (`SheetModelOperations.cs`), bumping a version counter; saving, undo snapshots, sorting, filtering, find/replace, and SQL all read from models, never from grid cells. There is no grid-to-model synchronization pass.
+- `FormulaEvaluationContext` memoizes cell results within one recalculation batch and detects cycles; render paths share a single context per pass, and `SheetModelDataSource` caches one context per model version for future virtual-mode panes.
 - Undo/redo is snapshot-based (`Stack<WorkbookModel>`), with independent secondary stacks for right-pane documents.
 - All destructive keyboard commands route through a single router (`ProcessCmdKey`) that respects overlay/focus state.
 
@@ -166,7 +181,7 @@ SheetLite/
 ## Roadmap
 
 1. Dependency-graph formula engine (incremental recalculation, reusable syntax trees, typed errors, cross-sheet references).
-2. Virtualized grid for very large CSV/XLSX files.
+2. Virtualized grid for very large CSV/XLSX files — Phase 1 (model-first editing, no `SyncAll`) is done; next step is binding panes to `IWorksheetDataSource` and enabling virtual mode. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
 3. Address residual findings from Round 3 of the code reviews (e.g., shortcuts that still target the left pane with two independent files).
 
 ## Privacy and portability

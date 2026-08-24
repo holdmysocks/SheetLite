@@ -1,8 +1,19 @@
 # Refactor Option: Virtualized Spreadsheet Grid
 
-Status: Proposed  
+Status: In progress — Phase 1 complete (model-first editing), data-source/view-map groundwork landed  
 Priority: High for very large CSV/XLSX files  
 Scope: Worksheet storage, grid binding, sort/filter views, split view, clipboard, and undo/redo
+
+## Implementation status (updated)
+
+- `GridTypes.cs` — shared `CellAddress`, `CellRange`, `CellEdit`, and `CellDisplayValue` primitives (the old private nested `MainForm.CellRange` was replaced by the shared type).
+- `SheetModelOperations.cs` — model-first mutation APIs on `SheetModel` (`SetCell`, `SetCellValue`, `ReplaceCell`, `ClearRange`, `InsertRows/Columns`, `DeleteRows/Columns`, `SwapRows/Columns`, `ReorderRows`) plus a monotonic `Version` counter; formula-reference rewriting happens inside these APIs so callers cannot forget it.
+- `WorksheetDataSource.cs` — `IWorksheetDataSource`, the memoizing `SheetModelDataSource` (formula results cached per model version), and `WorksheetView` display↔model maps for filtering/sort previews. Not yet bound to a grid pane.
+- `SyncAll()`, `SyncCell()`, and `SyncSecondaryAll()` are deleted. Every edit commits through the model (`FinishCellEdit`, paste, clear, fill, find/replace, filters, formatting); saving, undo snapshots, sorting, SQL, and the shared secondary pane read only from models.
+- Find/Replace, filter matching, filter-by-value, and copy-as now read evaluated values from the model (`EvaluatedCellValue`) instead of grid display cells.
+- Tests: `tests/SheetLite.Core.Tests` — dependency-free runner covering the primitives, mutations, save/undo-from-model acceptance criteria, the data source, and view maps.
+
+Remaining: bind panes to `IWorksheetDataSource`, enable `DataGridView.VirtualMode`, replace row-visible flags with `WorksheetView`, then sparse storage and change-set undo.
 
 ## Objective
 
@@ -137,14 +148,14 @@ Large pasted ranges may store compressed before/after blocks. Undo stacks should
 
 ### Phase 1: Model-first editing
 
-- [ ] Add `CellAddress`, `CellRange`, and worksheet mutation APIs.
-- [ ] Route cell edits, paste, clear, fill, formatting, and row/column commands through the model.
-- [ ] Remove correctness dependence on `SyncAll()`.
-- [ ] Add tests proving save and undo use model state even when the grid has not rendered a cell.
+- [x] Add `CellAddress`, `CellRange`, and worksheet mutation APIs.
+- [x] Route cell edits, paste, clear, fill, formatting, and row/column commands through the model.
+- [x] Remove correctness dependence on `SyncAll()` (the method is gone entirely).
+- [x] Add tests proving save and undo use model state even when the grid has not rendered a cell.
 
 ### Phase 2: Primary-grid virtual mode
 
-- [ ] Introduce `IWorksheetDataSource` and `WorksheetView`.
+- [x] Introduce `IWorksheetDataSource` and `WorksheetView` (landed; not yet bound to panes).
 - [ ] Enable `VirtualMode` on the primary grid.
 - [ ] Implement value, edit, and formatting callbacks.
 - [ ] Preserve selection, fill handle, frozen panes, headers, resizing, and context menus.

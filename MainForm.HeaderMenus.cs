@@ -110,7 +110,7 @@ internal sealed partial class MainForm
         var seen = new HashSet<string>(StringComparer.Ordinal); var duplicates = new List<int>();
         foreach (int row in selected) { string key = string.Join('\u001f', model.Rows[row].Select(cell => cell.Value)); if (!seen.Add(key)) duplicates.Add(row); }
         if (duplicates.Count == 0) { countLabel.Text = "No duplicate rows found"; return; }
-        PushUndo(); FormulaReferenceUpdater.DeleteRows(model, duplicates); foreach (int row in duplicates.OrderDescending()) model.Rows.RemoveAt(row); RenderSelect(Math.Min(duplicates.Min(), model.Rows.Count - 1), 0); countLabel.Text = $"Removed {duplicates.Count:N0} duplicate row(s)";
+        PushUndo(); model.DeleteRows(duplicates); RenderSelect(Math.Min(duplicates.Min(), model.Rows.Count - 1), 0); countLabel.Text = $"Removed {duplicates.Count:N0} duplicate row(s)";
     }
 
     private void HideSelectedRows()
@@ -125,7 +125,7 @@ internal sealed partial class MainForm
     private void DeleteHiddenRows()
     {
         var hidden = grid.Rows.Cast<DataGridViewRow>().Where(row => !row.Visible && row.Index < model.Rows.Count).Select(row => row.Index).OrderDescending().ToList(); if (hidden.Count == 0) return;
-        PushUndo(); FormulaReferenceUpdater.DeleteRows(model, hidden); foreach (int row in hidden) if (model.Rows.Count > 1) model.Rows.RemoveAt(row); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; RenderSelect(Math.Min(hidden.Min(), model.Rows.Count - 1), 0);
+        PushUndo(); model.DeleteRows(hidden); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; RenderSelect(Math.Min(hidden.Min(), model.Rows.Count - 1), 0);
     }
 
     private void HideSelectedColumns()
@@ -154,7 +154,7 @@ internal sealed partial class MainForm
     {
         var selected = grid.SelectedCells.Cast<DataGridViewCell>().ToList(); if (selected.Count == 0) return [];
         int top = selected.Min(cell => cell.RowIndex), bottom = selected.Max(cell => cell.RowIndex), left = selected.Min(cell => cell.ColumnIndex), right = selected.Max(cell => cell.ColumnIndex);
-        var matrix = new List<List<string>>(); for (int row = top; row <= bottom; row++) { var values = new List<string>(); for (int column = left; column <= right; column++) values.Add(grid[column, row].Selected ? grid[column, row].Value?.ToString() ?? "" : ""); matrix.Add(values); }
+        var matrix = new List<List<string>>(); for (int row = top; row <= bottom; row++) { var values = new List<string>(); for (int column = left; column <= right; column++) values.Add(grid[column, row].Selected ? EvaluatedCellValue(row, column) : ""); matrix.Add(values); }
         while (matrix.Count > 1 && matrix[^1].All(string.IsNullOrEmpty)) matrix.RemoveAt(matrix.Count - 1);
         while (matrix.Count > 0 && matrix[0].Count > 1 && matrix.All(row => string.IsNullOrEmpty(row[^1]))) foreach (var row in matrix) row.RemoveAt(row.Count - 1); return matrix;
     }
@@ -198,7 +198,7 @@ internal sealed partial class MainForm
     private void PasteSpecial(List<List<string>> rows)
     {
         if (rows.Count == 0 || grid.CurrentCell is null) return; PushUndo(); int startRow = grid.CurrentCell.RowIndex, startColumn = grid.CurrentCell.ColumnIndex, width = rows.Max(row => row.Count); EnsureGrid(startRow + rows.Count, startColumn + width); loading = true;
-        for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) { model.Rows[startRow + row][startColumn + column].Value = rows[row][column]; grid[startColumn + column, startRow + row].Tag = null; grid[startColumn + column, startRow + row].Value = rows[row][column]; }
+        for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) { model.SetCellValue(startRow + row, startColumn + column, rows[row][column]); grid[startColumn + column, startRow + row].Tag = null; grid[startColumn + column, startRow + row].Value = rows[row][column]; }
         loading = false; RecalculateFormulaCells(); SetDirty();
     }
 
