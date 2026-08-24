@@ -136,7 +136,9 @@ internal sealed partial class MainForm
         sortPanel.Dock = DockStyle.Fill; sortPanel.Height = 78; sortPanel.Visible = false; sortPanel.BackColor = Theme.Surface; sortPanel.Margin = Padding.Empty; sortPanel.BorderStyle = BorderStyle.FixedSingle;
         var title = new Label { Text = "Sort", Font = new Font("Segoe UI", 11, FontStyle.Bold), ForeColor = Theme.Foreground, AutoSize = true, Location = new(10, 10) };
         var targetLabel = ToolLabel("Sort target:"); targetLabel.SetBounds(82, 11, 72, 20); sortTarget.SetBounds(156, 7, 150, 27); sortTarget.Items.AddRange(["All rows", "Selection"]); sortTarget.SelectedIndex = 0;
-        var close = ToolButton("×"); close.SetBounds(738, 7, 32, 27); close.Anchor = AnchorStyles.Top | AnchorStyles.Right; close.Click += (_, _) => RevertSortPreview();
+        var close = ToolButton("×"); close.SetBounds(0, 7, 32, 27); close.Click += (_, _) => RevertSortPreview();
+        sortPanel.Resize += (_, _) => close.Location = new Point(Math.Max(0, sortPanel.ClientSize.Width - close.Width - 10), 7);
+        close.BringToFront();
         sortColumn1.SetBounds(20, 44, 190, 27); sortDirection1.SetBounds(216, 44, 120, 27); sortDirection1.Items.AddRange(["Ascending", "Descending"]); sortDirection1.SelectedIndex = 0; sortBlanks1.SetBounds(342, 44, 110, 27); sortBlanks1.Items.AddRange(["Blanks last", "Blanks first"]); sortBlanks1.SelectedIndex = 0;
         sortColumn2.SetBounds(20, 76, 190, 27); sortDirection2.SetBounds(216, 76, 120, 27); sortDirection2.Items.AddRange(["Ascending", "Descending"]); sortDirection2.SelectedIndex = 0; sortBlanks2.SetBounds(342, 76, 110, 27); sortBlanks2.Items.AddRange(["Blanks last", "Blanks first"]); sortBlanks2.SelectedIndex = 0; sortColumn2.Visible = sortDirection2.Visible = sortBlanks2.Visible = false;
         addSortColumn.SetBounds(464, 44, 130, 27);
@@ -165,11 +167,17 @@ internal sealed partial class MainForm
         }
         var run = IconButton(UiIcon.Run, "Run SQL query (F5 or Ctrl+Enter)"); run.SetBounds(104, 3, 32, 30);
         var clear = IconButton(UiIcon.Clear, "Clear SQL editor"); clear.SetBounds(138, 3, 32, 30);
-        var close = ToolButton("×"); close.SetBounds(748, 4, 32, 27); close.Anchor = AnchorStyles.Top | AnchorStyles.Right; close.FlatAppearance.BorderSize = 0;
+        var close = ToolButton("×"); close.SetBounds(0, 4, 32, 27); close.FlatAppearance.BorderSize = 0;
         run.Click += (_, _) => RunSql(); clear.Click += (_, _) => sqlEditor.Clear(); close.Click += (_, _) => ToggleSqlConsole(false);
-        sqlFirstRowHeader.SetBounds(180, 9, 118, 20); sqlStatus.SetBounds(310, 9, 420, 20); sqlStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        sqlFirstRowHeader.SetBounds(180, 9, 118, 20); sqlStatus.SetBounds(310, 9, 420, 20);
         sqlToolTips.SetToolTip(run, run.AccessibleName); sqlToolTips.SetToolTip(clear, clear.AccessibleName); sqlToolTips.SetToolTip(close, "Close SQL console");
         header.Controls.AddRange([title, run, clear, sqlFirstRowHeader, sqlStatus, close]);
+        header.Resize += (_, _) =>
+        {
+            close.Location = new Point(Math.Max(0, header.ClientSize.Width - close.Width - 10), 4);
+            sqlStatus.Width = Math.Max(100, close.Left - sqlStatus.Left - 10);
+        };
+        close.BringToFront();
 
         var body = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel1, SplitterDistance = 210, SplitterWidth = 4, BackColor = Theme.CurrentLine };
         var sourcesHeader = new Label { Text = "TABLES & COLUMNS", Dock = DockStyle.Top, Height = 28, Padding = new Padding(9, 7, 0, 0), ForeColor = Theme.Comment, BackColor = Theme.Inset, Font = new Font("Segoe UI", 8F, FontStyle.Bold) };
@@ -218,9 +226,19 @@ internal sealed partial class MainForm
     {
         infoPanel.Dock = DockStyle.Fill; infoPanel.Height = 88; infoPanel.Visible = false; infoPanel.BackColor = Theme.Surface; infoPanel.BorderStyle = BorderStyle.FixedSingle;
         var title = new Label { Name = "InfoTitle", Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Theme.Purple, AutoSize = true, Location = new(12, 9) };
-        var body = new Label { Name = "InfoBody", ForeColor = Theme.Foreground, AutoEllipsis = true, Location = new(12, 34), Size = new(720, 44), Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right };
-        var close = ToolButton("×"); close.SetBounds(748, 7, 32, 27); close.Anchor = AnchorStyles.Top | AnchorStyles.Right; close.Click += (_, _) => { infoPanel.Visible = false; RefreshCommandHost(); };
+        var body = new Label { Name = "InfoBody", ForeColor = Theme.Foreground, AutoEllipsis = true, Location = new(12, 34), Size = new(720, 44) };
+        var close = ToolButton("×"); close.SetBounds(0, 7, 32, 27); close.Click += (_, _) => { infoPanel.Visible = false; RefreshCommandHost(); };
         infoPanel.Controls.AddRange([title, body, close]);
+        // Fixed-position close buttons drift off-panel when the docked bar resizes; keep the
+        // button pinned to the corner and the text clear of it (labels would otherwise paint
+        // over it and swallow its clicks).
+        infoPanel.Resize += (_, _) =>
+        {
+            close.Location = new Point(Math.Max(0, infoPanel.ClientSize.Width - close.Width - 10), 7);
+            body.Width = Math.Max(100, close.Left - body.Left - 12);
+        };
+        close.BringToFront();
+        infoPanel.PerformLayout();
     }
 
     private void BuildHelpPage()
@@ -230,8 +248,15 @@ internal sealed partial class MainForm
         var title = new Label { Text = "SheetLite Help", ForeColor = Theme.Purple, Font = new Font("Segoe UI", 16, FontStyle.Bold), AutoSize = true, Location = new(18, 14) };
         helpSearch.PlaceholderText = "Search features, formulas, SQL, shortcuts…"; helpSearch.SetBounds(350, 14, 350, 28); helpSearch.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         helpStatus.SetBounds(708, 20, 120, 22); helpStatus.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        var close = ToolButton("×"); close.SetBounds(840, 14, 34, 28); close.Anchor = AnchorStyles.Top | AnchorStyles.Right; close.Click += (_, _) => CloseHelpPage();
+        var close = ToolButton("×"); close.SetBounds(0, 14, 34, 28); close.Click += (_, _) => CloseHelpPage();
         header.Controls.AddRange([title, helpSearch, helpStatus, close]);
+        header.Resize += (_, _) =>
+        {
+            close.Location = new Point(Math.Max(0, header.ClientSize.Width - close.Width - 12), 14);
+            helpStatus.Location = new Point(Math.Max(0, close.Left - helpStatus.Width - 8), 20);
+            helpSearch.Width = Math.Max(120, helpStatus.Left - helpSearch.Left - 8);
+        };
+        close.BringToFront();
 
         helpSplitView.Dock = DockStyle.Fill; helpSplitView.FixedPanel = FixedPanel.Panel1; helpSplitView.SplitterWidth = 4; helpSplitView.BackColor = Theme.CurrentLine;
         helpSplitView.Panel1.BackColor = Theme.Surface; helpSplitView.Panel2.BackColor = Theme.Background;

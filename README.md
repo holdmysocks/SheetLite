@@ -2,7 +2,7 @@
 
 A fast, portable, Dracula-themed CSV and XLSX workbook editor for Windows, built with WinForms on .NET 9. SheetLite ships as a single self-contained executable — no installer, no runtime download, no network access, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.4.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
+![Version](https://img.shields.io/badge/version-0.5.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
 
 ## Overview
 

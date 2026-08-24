@@ -1137,7 +1137,7 @@ internal sealed partial class MainForm : Form
 
     protected override bool ProcessCmdKey(ref Message message, Keys keyData) =>
         TryProcessAppShortcut(keyData) || base.ProcessCmdKey(ref message, keyData);
-    private void About() => ShowInfoPanel("About SheetLite", $"SheetLite {AppVersion} — a fast, portable CSV/XLSX workbook editor with multiple worksheets, formulas, reversible sorting, split view, and local SQL. No telemetry. No installer.");
+    private void About() => ShowNotice("About SheetLite", $"SheetLite {AppVersion} — a fast, portable CSV/XLSX workbook editor with multiple worksheets, formulas, reversible sorting, split view, and local SQL. No telemetry. No installer.");
     private void ShowNotice(string title, string text) { if (welcome.Visible) ShowWelcomeInfo(title, text); else ShowInfoPanel(title, text); }
     protected override void Dispose(bool disposing)
     {
