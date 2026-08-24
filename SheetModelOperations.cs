@@ -31,11 +31,14 @@ internal sealed partial class SheetModel
     public string GetRawValue(CellAddress address) => GetRawValue(address.Row, address.Column);
 
     /// <summary>Evaluated display value: formulas are calculated, everything else is returned raw. Errors render as "#ERROR!".</summary>
-    public string EvaluatedValue(int row, int column)
+    public string EvaluatedValue(int row, int column) => EvaluatedValue(row, column, null);
+
+    /// <summary>Single source of truth for evaluated display text; pass a shared <paramref name="context"/> to memoize a whole pass.</summary>
+    public string EvaluatedValue(int row, int column, FormulaEngine.FormulaEvaluationContext? context)
     {
         string raw = GetRawValue(row, column);
         if (!raw.TrimStart().StartsWith('=')) return raw;
-        FormulaResult result = FormulaEngine.Evaluate(this, row, column);
+        FormulaResult result = context is null ? FormulaEngine.Evaluate(this, row, column) : context.Evaluate(row, column);
         return result.Success ? result.Value : "#ERROR!";
     }
 

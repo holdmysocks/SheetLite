@@ -58,6 +58,19 @@ internal sealed class DataSourceTests
         Assert.True(display.Bold);
     }
 
+    [Test] public void GetEvaluatedText_matches_SheetModel_EvaluatedValue_for_all_cell_kinds()
+    {
+        var sheet = NewSheet();
+        sheet.SetCellValue(0, 0, "7");            // plain number
+        sheet.SetCellValue(1, 0, "=A1*3");       // valid formula -> 21
+        sheet.SetCellValue(2, 0, "=A1+)");       // broken formula -> #ERROR!
+        sheet.SetCellValue(2, 2, "tail");         // plain text
+        var source = new SheetModelDataSource(() => sheet);
+        foreach (int row in Enumerable.Range(0, 3))
+            foreach (int column in Enumerable.Range(0, 3))
+                Assert.Equal(sheet.EvaluatedValue(row, column), source.GetEvaluatedText(new CellAddress(row, column)));
+    }
+
     [Test] public void SetCell_through_interface_commits_to_the_sheet()
     {
         var sheet = NewSheet();

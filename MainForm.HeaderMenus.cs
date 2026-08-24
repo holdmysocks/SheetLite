@@ -239,8 +239,9 @@ internal sealed partial class MainForm
         if (column < 0 || column >= grid.ColumnCount) return;
         columnFilterPopup?.Close();
         int lastRow = Math.Max(1, model.Rows.FindLastIndex(row => row.Any(cell => cell.Value.Length > 0)));
+        var filterContext = FormulaEngine.CreateContext(model);
         var choices = Enumerable.Range(1, lastRow)
-            .Select(row => HeaderFilterValue(row, column))
+            .Select(row => HeaderFilterValue(row, column, filterContext))
             .Distinct(StringComparer.CurrentCultureIgnoreCase)
             .OrderBy(value => value.Length == 0 ? 0 : 1)
             .ThenBy(value => value, StringComparer.CurrentCultureIgnoreCase)
@@ -276,19 +277,21 @@ internal sealed partial class MainForm
         popup.Show(this);
     }
 
-    private string HeaderFilterValue(int row, int column) => row < model.Rows.Count && column < model.Rows[row].Count ? EvaluatedCellValue(row, column) : "";
+    private string HeaderFilterValue(int row, int column, FormulaEngine.FormulaEvaluationContext? context = null) => row < model.Rows.Count && column < model.Rows[row].Count ? EvaluatedCellValue(row, column, context) : "";
 
     private void ApplyHeaderValueFilter(int column, HashSet<string> values)
     {
         if (column < 0 || column >= grid.ColumnCount) return; headerFilterColumn = column; headerFilterValues = new HashSet<string>(values, StringComparer.CurrentCultureIgnoreCase); headerFilterOperator = headerFilterConditionValue = null; filter = $"Values in {ColumnName(column)}"; int visible = 0;
-        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0]; for (int row = 0; row < grid.RowCount; row++) { bool show = row == 0 || values.Contains(HeaderFilterValue(row, column)); grid.Rows[row].Visible = show; if (show && row > 0) visible++; }
+        var context = FormulaEngine.CreateContext(model);
+        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0]; for (int row = 0; row < grid.RowCount; row++) { bool show = row == 0 || values.Contains(HeaderFilterValue(row, column, context)); grid.Rows[row].Visible = show; if (show && row > 0) visible++; }
         MirrorPrimaryRowVisibilityToSharedSecondary(); countLabel.Text = $"{visible:N0} visible rows × {grid.ColumnCount:N0} columns"; grid.Invalidate(); UpdateFindStatus();
     }
 
     private void ApplyHeaderConditionFilter(int column, string op, string value)
     {
         if (column < 0 || column >= grid.ColumnCount) return; headerFilterColumn = column; headerFilterValues = null; headerFilterOperator = op; headerFilterConditionValue = value; filter = $"{ColumnName(column)} {op}"; int visible = 0;
-        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0]; for (int row = 0; row < grid.RowCount; row++) { bool show = row == 0 || FilterMatch(HeaderFilterValue(row, column), op, value); grid.Rows[row].Visible = show; if (show && row > 0) visible++; }
+        var context = FormulaEngine.CreateContext(model);
+        if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[column, 0]; for (int row = 0; row < grid.RowCount; row++) { bool show = row == 0 || FilterMatch(HeaderFilterValue(row, column, context), op, value); grid.Rows[row].Visible = show; if (show && row > 0) visible++; }
         MirrorPrimaryRowVisibilityToSharedSecondary(); countLabel.Text = $"{visible:N0} visible rows × {grid.ColumnCount:N0} columns"; grid.Invalidate(); UpdateFindStatus();
     }
 }

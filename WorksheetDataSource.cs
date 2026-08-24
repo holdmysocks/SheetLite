@@ -39,11 +39,7 @@ internal sealed class SheetModelDataSource : IWorksheetDataSource
     public string GetEvaluatedText(CellAddress address)
     {
         SheetModel sheet = Sheet;
-        string raw = sheet.GetRawValue(address);
-        if (!raw.TrimStart().StartsWith('=')) return raw;
-        FormulaEngine.FormulaEvaluationContext context = ContextFor(sheet);
-        FormulaResult result = context.Evaluate(address.Row, address.Column);
-        return result.Success ? result.Value : "#ERROR!";
+        return sheet.EvaluatedValue(address.Row, address.Column, ContextFor(sheet));
     }
 
     public CellDisplayValue GetDisplayValue(CellAddress address)

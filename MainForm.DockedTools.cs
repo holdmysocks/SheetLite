@@ -514,23 +514,17 @@ internal sealed partial class MainForm
         {
             if (!grid.Rows[r].Visible) continue;
             for (int c = 0; c < grid.ColumnCount && c < model.Rows[r].Count; c++)
-            {
-                string raw = model.Rows[r][c].Value;
-                if (!raw.TrimStart().StartsWith('=')) { if (raw.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) count++; continue; }
-                FormulaResult result = context.Evaluate(r, c);
-                string text = result.Success ? result.Value : "#ERROR!";
-                if (text.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) count++;
-            }
+                if (model.EvaluatedValue(r, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) count++;
         }
         findStatus.Text = count == 0 ? "No results" : $"{count:N0} result{(count == 1 ? "" : "s")}";
     }
     private void FindNext(bool backwards)
     {
-        string term = findBox.Text; if (term.Length == 0) return; int total = grid.RowCount * grid.ColumnCount; int current = grid.CurrentCell is null ? 0 : grid.CurrentCell.RowIndex * grid.ColumnCount + grid.CurrentCell.ColumnIndex;
-        for (int n = 1; n <= total; n++) { int p = (current + (backwards ? -n : n) + total * 2) % total, r = p / grid.ColumnCount, c = p % grid.ColumnCount; if (grid.Rows[r].Visible && r < model.Rows.Count && c < model.Rows[r].Count && EvaluatedCellValue(r, c).Contains(term, StringComparison.CurrentCultureIgnoreCase)) { grid.CurrentCell = grid[c, r]; grid.ClearSelection(); grid[c, r].Selected = true; grid.FirstDisplayedScrollingRowIndex = Math.Max(0, r - 2); return; } }
+        string term = findBox.Text; if (term.Length == 0) return; var context = FormulaEngine.CreateContext(model); int total = grid.RowCount * grid.ColumnCount; int current = grid.CurrentCell is null ? 0 : grid.CurrentCell.RowIndex * grid.ColumnCount + grid.CurrentCell.ColumnIndex;
+        for (int n = 1; n <= total; n++) { int p = (current + (backwards ? -n : n) + total * 2) % total, r = p / grid.ColumnCount, c = p % grid.ColumnCount; if (grid.Rows[r].Visible && EvaluatedCellValue(r, c, context).Contains(term, StringComparison.CurrentCultureIgnoreCase)) { grid.CurrentCell = grid[c, r]; grid.ClearSelection(); grid[c, r].Selected = true; grid.FirstDisplayedScrollingRowIndex = Math.Max(0, r - 2); return; } }
     }
-    private void ReplaceCurrent() { if (grid.CurrentCell is null || findBox.Text.Length == 0) return; int row = grid.CurrentCell.RowIndex, column = grid.CurrentCell.ColumnIndex; if (row >= model.Rows.Count || column >= model.Rows[row].Count) { FindNext(false); return; } string value = EvaluatedCellValue(row, column); if (!value.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) { FindNext(false); return; } PushUndo(); string replaced = ReplaceInsensitive(value, findBox.Text, replaceBox.Text); model.SetCellValue(row, column, replaced); RecalculateFormulaCells(); ApplyCellCore(row, column, FormulaEngine.CreateContext(model)); ReapplyDockedFilterIfActive(); SetDirtyCell(row, column); UpdateFindStatus(); }
-    private void ReplaceAllDocked() { if (findBox.Text.Length == 0) return; var matches = new List<(int Row, int Column)>(); for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) if (EvaluatedCellValue(r, c).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) matches.Add((r, c)); if (matches.Count == 0) { findStatus.Text = "No results"; return; } PushUndo(); var replacements = matches.Select(match => (match.Row, match.Column, Value: ReplaceInsensitive(EvaluatedCellValue(match.Row, match.Column), findBox.Text, replaceBox.Text))).ToList(); loading = true; foreach (var (row, column, value) in replacements) model.SetCellValue(row, column, value); loading = false; RecalculateFormulaCells(); var context = FormulaEngine.CreateContext(model); foreach (var (row, column, _) in replacements) ApplyCellCore(row, column, context); ReapplyDockedFilterIfActive(); SetDirty(); findStatus.Text = $"Replaced {replacements.Count:N0}"; }
+    private void ReplaceCurrent() { if (grid.CurrentCell is null || findBox.Text.Length == 0) return; int row = grid.CurrentCell.RowIndex, column = grid.CurrentCell.ColumnIndex; if (row >= model.Rows.Count || column >= model.Rows[row].Count) { FindNext(false); return; } string value = MatchableCellValue(row, column); if (!value.Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) { FindNext(false); return; } PushUndo(); string replaced = ReplaceInsensitive(value, findBox.Text, replaceBox.Text); model.SetCellValue(row, column, replaced); RecalculateFormulaCells(); ApplyCellCore(row, column, FormulaEngine.CreateContext(model)); ReapplyDockedFilterIfActive(); SetDirtyCell(row, column); UpdateFindStatus(); }
+    private void ReplaceAllDocked() { if (findBox.Text.Length == 0) return; var context = FormulaEngine.CreateContext(model); var matches = new List<(int Row, int Column)>(); for (int r = 0; r < model.Rows.Count; r++) for (int c = 0; c < model.Rows[r].Count; c++) if (MatchableCellValue(r, c, context).Contains(findBox.Text, StringComparison.CurrentCultureIgnoreCase)) matches.Add((r, c)); if (matches.Count == 0) { findStatus.Text = "No results"; return; } PushUndo(); var replacements = matches.Select(match => (match.Row, match.Column, Value: ReplaceInsensitive(MatchableCellValue(match.Row, match.Column, context), findBox.Text, replaceBox.Text))).ToList(); loading = true; foreach (var (row, column, value) in replacements) model.SetCellValue(row, column, value); loading = false; RecalculateFormulaCells(); foreach (var (row, column, _) in replacements) ApplyCellCore(row, column, context); ReapplyDockedFilterIfActive(); SetDirty(); findStatus.Text = $"Replaced {replacements.Count:N0}"; }
 
     private void ShowFilterBar() { PopulateColumnTools(); filterBar.Visible = true; RefreshCommandHost(); filterValue.Focus(); }
     private void ToggleFilterBuilder() { filterBuilderExpanded = !filterBuilderExpanded; UpdateFilterBuilderControls(); LayoutFilterBar(); RefreshCommandHost(); }
@@ -540,7 +534,8 @@ internal sealed partial class MainForm
         headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null;
         if (filterColumn.SelectedIndex < 0) return; int firstColumn = filterColumn.SelectedIndex; string firstOperator = filterOperator.Text, firstValue = filterValue.Text; int visible = 0;
         if (grid.CurrentCell is not null && grid.CurrentCell.RowIndex > 0) grid.CurrentCell = grid[0, 0];
-        for (int r = 1; r < grid.RowCount; r++) { bool match = FilterMatch(EvaluatedCellValue(r, firstColumn), firstOperator, firstValue); if (secondFilterVisible && filterColumn2.SelectedIndex >= 0) { bool other = FilterMatch(EvaluatedCellValue(r, filterColumn2.SelectedIndex), filterOperator2.Text, filterValue2.Text); match = filterJoin.Text == "OR" ? match || other : match && other; } grid.Rows[r].Visible = match; if (match) visible++; }
+        var context = FormulaEngine.CreateContext(model);
+        for (int r = 1; r < grid.RowCount; r++) { bool match = FilterMatch(EvaluatedCellValue(r, firstColumn, context), firstOperator, firstValue); if (secondFilterVisible && filterColumn2.SelectedIndex >= 0) { bool other = FilterMatch(EvaluatedCellValue(r, filterColumn2.SelectedIndex, context), filterOperator2.Text, filterValue2.Text); match = filterJoin.Text == "OR" ? match || other : match && other; } grid.Rows[r].Visible = match; if (match) visible++; }
         filter = firstValue; MirrorPrimaryRowVisibilityToSharedSecondary(); countLabel.Text = $"{visible:N0} visible rows × {grid.ColumnCount:N0} columns"; UpdateFindStatus();
     }
     private void ReapplyDockedFilterIfActive() { if (headerFilterColumn >= 0 && headerFilterValues is not null) ApplyHeaderValueFilter(headerFilterColumn, headerFilterValues); else if (headerFilterColumn >= 0 && headerFilterOperator is not null) ApplyHeaderConditionFilter(headerFilterColumn, headerFilterOperator, headerFilterConditionValue ?? ""); else if (filter is not null && filterColumn.SelectedIndex >= 0 && grid.RowCount > 0) ApplyDockedFilter(); }
@@ -551,7 +546,7 @@ internal sealed partial class MainForm
 
     private void ShowSortPanel()
     {
-        if (!sortPanel.Visible) { workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = dirty; sortSelectedRows = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => cell.RowIndex).Where(row => row > 0 && row < model.Rows.Count).Distinct().Order().ToList(); sortPreviewApplied = false; sortSaveButton.Enabled = sortRevertButton.Enabled = false; }
+        if (!sortPanel.Visible) { FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = dirty; sortSelectedRows = grid.SelectedCells.Cast<DataGridViewCell>().Select(cell => cell.RowIndex).Where(row => row > 0 && row < model.Rows.Count).Distinct().Order().ToList(); sortPreviewApplied = false; sortSaveButton.Enabled = sortRevertButton.Enabled = false; }
         PopulateColumnTools(); sortPanel.Visible = true; RefreshCommandHost();
     }
     private void ApplyDockedSort()
@@ -689,14 +684,14 @@ internal sealed partial class MainForm
 
     private void SwitchPrimarySheet(int index)
     {
-        SetActivePane(false); if (index < 0 || index >= workbook.Sheets.Count || index == workbook.ActiveSheetIndex) { UpdateStatus(); return; } if (sortBaselineWorkbook is not null) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; workbook.ActiveSheetIndex = index; model = workbook.ActiveSheet.Sheet; filter = null; RefreshPrimarySheetTabs(); Render(); UpdateTitle(); UpdateStatus();
+        SetActivePane(false); if (index < 0 || index >= workbook.Sheets.Count || index == workbook.ActiveSheetIndex) { UpdateStatus(); return; } if (sortBaselineWorkbook is not null) SaveSortPreview(); FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; workbook.ActiveSheetIndex = index; model = workbook.ActiveSheet.Sheet; filter = null; RefreshPrimarySheetTabs(); Render(); UpdateTitle(); UpdateStatus();
     }
 
     private void SwitchSecondarySheet(int index)
     {
         SetActivePane(true); if (secondaryWorkbook is null || index < 0 || index >= secondaryWorkbook.Sheets.Count) return;
         if (secondarySharesPrimary) { SwitchPrimarySheet(index); SetActivePane(true); return; }
-        secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!; secondaryWorkbook.ActiveSheetIndex = index; secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; RefreshSecondarySheetTabs(); RenderSecondaryModel(); UpdateStatus();
+        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!; secondaryWorkbook.ActiveSheetIndex = index; secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; RefreshSecondarySheetTabs(); RenderSecondaryModel(); UpdateStatus();
     }
 
     private void BeginRenameSheet(int index, Control tab, Control label)
@@ -754,7 +749,7 @@ internal sealed partial class MainForm
 
     private void OpenSharedSplit()
     {
-        workbook.ActiveSheet.Sheet = model; secondaryDocuments.Clear(); secondaryDocumentIndex = 0; secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path; secondaryDirty = false; secondarySharesPrimary = true;
+        FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; secondaryDocuments.Clear(); secondaryDocumentIndex = 0; secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path; secondaryDirty = false; secondarySharesPrimary = true;
         UpdateSecondaryTitle(); RenderSecondaryModel(); RefreshSecondarySheetTabs(); ShowSecondaryPane();
     }
 
@@ -776,7 +771,7 @@ internal sealed partial class MainForm
                 if (splitView.Panel2Collapsed) OpenSharedSplit();
                 if (secondarySharesPrimary)
                 {
-                    workbook.ActiveSheet.Sheet = model; secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path; secondaryDirty = dirty; secondarySharesPrimary = false; secondaryDocuments.Clear(); secondaryDocuments.Add(new(secondaryWorkbook, secondaryPath, secondaryDirty)); secondaryDocumentIndex = 0; UpdateSecondaryTitle();
+                    FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; secondaryWorkbook = workbook; secondaryModel = model; secondaryPath = path; secondaryDirty = dirty; secondarySharesPrimary = false; secondaryDocuments.Clear(); secondaryDocuments.Add(new(secondaryWorkbook, secondaryPath, secondaryDirty)); secondaryDocumentIndex = 0; UpdateSecondaryTitle();
                 }
                 OpenFile(dialog.FileName); SetActivePane(false);
             }
@@ -926,7 +921,7 @@ internal sealed partial class MainForm
     private bool TrySaveSecondaryTo(string target)
     {
         if (secondaryWorkbook is null || secondaryModel is null) return false;
-        try { secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; UseWaitCursor = true; if (Path.GetExtension(target).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) XlsxCodec.SaveWorkbook(target, secondaryWorkbook); else CsvCodec.Save(target, secondaryModel); secondaryPath = target; secondaryDirty = false; UpdateSecondaryTitle(); UpdateFileTabChrome(); UpdateStatus(); return true; }
+        try { FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; UseWaitCursor = true; if (Path.GetExtension(target).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) XlsxCodec.SaveWorkbook(target, secondaryWorkbook); else CsvCodec.Save(target, secondaryModel); secondaryPath = target; secondaryDirty = false; UpdateSecondaryTitle(); UpdateFileTabChrome(); UpdateStatus(); return true; }
         catch (Exception ex) { ShowNotice("Save failed", "Could not save the right-pane file. " + ex.Message); return false; }
         finally { UseWaitCursor = false; }
     }
@@ -950,7 +945,7 @@ internal sealed partial class MainForm
 
     private void RunSql()
     {
-        var result = SqlQueryEngine.Execute(model, sqlEditor.Text, new SqlQueryOptions { FirstRowIsHeader = sqlFirstRowHeader.Checked });
+        FlushPendingEdits(grid); var result = SqlQueryEngine.Execute(model, sqlEditor.Text, new SqlQueryOptions { FirstRowIsHeader = sqlFirstRowHeader.Checked });
         if (!result.Success) { sqlStatus.Text = "Error: " + result.Error; return; }
         if (!splitView.Panel2Collapsed && !secondarySharesPrimary) { CaptureSecondaryDocument(); } else secondaryDocuments.Clear();
         secondaryModel = result.ToSheetModel(); secondaryWorkbook = WorkbookModel.FromSheet(secondaryModel, "Results"); secondaryPath = null; secondaryDirty = secondarySharesPrimary = false; secondaryDocuments.Add(new(secondaryWorkbook)); secondaryDocumentIndex = secondaryDocuments.Count - 1; secondaryPaneTitle.Text = "SQL result"; RenderSecondaryModel(); RefreshSecondarySheetTabs(); RefreshDocumentTabs(); ShowSecondaryPane(); sqlStatus.Text = $"Returned {result.Rows.Count:N0} row(s)";

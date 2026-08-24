@@ -801,7 +801,7 @@ internal sealed partial class MainForm : Form
     private void SavePrimary() { if (path is null) SavePrimaryAs(); else TrySaveTo(path); }
     private bool TrySaveTo(string target)
     {
-        try { if (sortBaselineWorkbook is not null) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; UseWaitCursor = true; if (Path.GetExtension(target).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) XlsxCodec.SaveWorkbook(target, workbook); else { CsvCodec.Save(target, model); if (workbook.Sheets.Count > 1) ShowNotice("CSV saves one sheet", $"Saved the active sheet '{workbook.ActiveSheet.Name}'. Use XLSX to keep all {workbook.Sheets.Count} sheets."); } path = target; dirty = false; UpdateTitle(); UpdateStatus(); return true; }
+        try { FlushPendingEdits(grid); if (sortBaselineWorkbook is not null) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; UseWaitCursor = true; if (Path.GetExtension(target).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) XlsxCodec.SaveWorkbook(target, workbook); else { CsvCodec.Save(target, model); if (workbook.Sheets.Count > 1) ShowNotice("CSV saves one sheet", $"Saved the active sheet '{workbook.ActiveSheet.Name}'. Use XLSX to keep all {workbook.Sheets.Count} sheets."); } path = target; dirty = false; UpdateTitle(); UpdateStatus(); return true; }
         catch (Exception ex) { ShowNotice("Save failed", "Could not save the file. " + ex.Message); return false; }
         finally { UseWaitCursor = false; }
     }
@@ -834,7 +834,7 @@ internal sealed partial class MainForm : Form
         target.Style.BackColor = source.BackColor ?? Theme.CellBackground; target.Style.ForeColor = source.ForeColor ?? Theme.Foreground; target.Style.Font = source.Bold ? boldCellFont : Font;
     }
 
-    private void PushUndo() { if (loading) return; if (sortBaselineWorkbook is not null && sortPreviewApplied) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); if (undo.Count > 40) { var keep = undo.Take(40).Reverse().ToArray(); undo.Clear(); foreach (var x in keep) undo.Push(x); } redo.Clear(); }
+    private void PushUndo() { if (loading) return; FlushPendingEdits(grid); if (sortBaselineWorkbook is not null && sortPreviewApplied) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); if (undo.Count > 40) { var keep = undo.Take(40).Reverse().ToArray(); undo.Clear(); foreach (var x in keep) undo.Push(x); } redo.Clear(); }
     private void Undo()
     {
         if (sortBaselineWorkbook is not null)
@@ -842,7 +842,7 @@ internal sealed partial class MainForm : Form
             bool cancelledPreview = sortPreviewApplied; RevertSortPreview();
             if (cancelledPreview) { countLabel.Text = "Sort preview reverted"; return; }
         }
-        if (undo.Count == 0) return; workbook.ActiveSheet.Sheet = model; redo.Push(workbook.Clone()); workbook = undo.Pop(); model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
+        if (undo.Count == 0) return; FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; redo.Push(workbook.Clone()); workbook = undo.Pop(); model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
     private void Redo()
     {
@@ -851,7 +851,7 @@ internal sealed partial class MainForm : Form
             bool cancelledPreview = sortPreviewApplied; RevertSortPreview();
             if (cancelledPreview) { countLabel.Text = "Sort preview reverted"; return; }
         }
-        if (redo.Count == 0) return; workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); workbook = redo.Pop(); model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
+        if (redo.Count == 0) return; FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); workbook = redo.Pop(); model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
     private void Copy() { if (grid.GetCellCount(DataGridViewElementStates.Selected) > 0 && grid.GetClipboardContent() is DataObject data) Clipboard.SetDataObject(data); }
     private void Cut() { PushUndo(); Copy(); DeleteContents(false); }
@@ -889,13 +889,23 @@ internal sealed partial class MainForm : Form
         ApplyRowOrder([0, .. body, .. blanks]);
         RenderSelect(1, col); SetDirty();
     }
-    private string EvaluatedCellValue(int row, int column)
+    private string EvaluatedCellValue(int row, int column, FormulaEngine.FormulaEvaluationContext? context = null)
     {
         if (row < 0 || row >= model.Rows.Count || column < 0 || column >= model.Rows[row].Count) return "";
-        string raw = model.Rows[row][column].Value;
-        if (!raw.TrimStart().StartsWith('=')) return raw;
-        var result = FormulaEngine.Evaluate(model, row, column);
-        return result.Success ? result.Value : "#ERROR!";
+        return model.EvaluatedValue(row, column, context);
+    }
+    /// <summary>Text that find/replace operates on for a cell: raw formula source for formulas, evaluated display text otherwise.</summary>
+    private string MatchableCellValue(int row, int column, FormulaEngine.FormulaEvaluationContext? context = null)
+        => model.IsFormula(row, column) ? model.GetRawValue(row, column) : EvaluatedCellValue(row, column, context);
+
+    /// <summary>
+    /// Commits an in-progress cell editor into the model before a command snapshots or renders state.
+    /// ToolStrip commands and shortcuts never take WinForms focus, so nothing else ends the edit for them.
+    /// </summary>
+    private void FlushPendingEdits(DataGridView pane)
+    {
+        if (!loading && ReferenceEquals(pane, grid)) { grid.EndEdit(); return; }
+        if (!secondaryLoading && ReferenceEquals(pane, secondaryGrid)) secondaryGrid.EndEdit();
     }
     private void ApplyRowOrder(IReadOnlyList<int> oldIndicesInNewOrder) => model.ReorderRows(oldIndicesInNewOrder);
     private static int CompareCells(string a, string b)
@@ -939,9 +949,9 @@ internal sealed partial class MainForm : Form
     private void ClearFormatting() { PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(cell.RowIndex, cell.ColumnIndex), CellEdit.ResetFormatting()); cell.Style.BackColor = Theme.CellBackground; cell.Style.ForeColor = Theme.Foreground; cell.Style.Font = Font; } SetDirty(); }
     private void AutoSizeColumns() { foreach (int c in grid.SelectedCells.Cast<DataGridViewCell>().Select(x => x.ColumnIndex).Distinct()) grid.Columns[c].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells; BeginInvoke(() => { foreach (DataGridViewColumn c in grid.Columns) if (c.AutoSizeMode != DataGridViewAutoSizeColumnMode.None) { int w = Math.Min(c.Width, 400); c.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; c.Width = w; } }); }
 
-    private void EnsureGrid(int rows, int columns) { if (rows <= grid.RowCount && columns <= grid.ColumnCount) return; model.EnsureSize(Math.Max(rows, grid.RowCount), Math.Max(columns, grid.ColumnCount)); Render(); }
+    private void EnsureGrid(int rows, int columns) { if (rows <= grid.RowCount && columns <= grid.ColumnCount) return; FlushPendingEdits(grid); model.EnsureSize(Math.Max(rows, grid.RowCount), Math.Max(columns, grid.ColumnCount)); Render(); }
     private void RenderSelect(int row, int col) { Render(); grid.CurrentCell = grid[Math.Max(0, col), Math.Max(0, row)]; SetDirty(); }
-    private static string ColumnName(int index) { string s = ""; for (int n = index + 1; n > 0; n = (n - 1) / 26) s = (char)('A' + (n - 1) % 26) + s; return s; }
+    private static string ColumnName(int index) => CellAddress.ColumnName(index);
     private void SetDirty()
     {
         dirty = true;
@@ -949,6 +959,7 @@ internal sealed partial class MainForm : Form
         // part of its baseline so applying or reverting a sort cannot erase them.
         if (sortBaselineWorkbook is not null && !sortPreviewApplied)
         {
+            FlushPendingEdits(grid);
             workbook.ActiveSheet.Sheet = model;
             sortBaselineWorkbook = workbook.Clone();
             sortBaselineDirty = true;
@@ -960,7 +971,7 @@ internal sealed partial class MainForm : Form
         dirty = true;
         if (sortBaselineWorkbook is not null && !sortPreviewApplied)
         {
-            workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = true;
+            FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = true;
         }
         RefreshSharedSecondaryCell(row, column); UpdateTitle(); UpdateStatus();
     }

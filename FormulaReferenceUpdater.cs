@@ -167,7 +167,7 @@ internal static partial class FormulaReferenceUpdater
         match.Groups[groupOffset].Value == "$");
 
     private static string FormatReference(Reference reference) =>
-        (reference.FixedColumn ? "$" : "") + ColumnName(reference.Column) +
+        (reference.FixedColumn ? "$" : "") + CellAddress.ColumnName(reference.Column) +
         (reference.FixedRow ? "$" : "") + (reference.Row + 1);
 
     private static int ParseColumn(string letters)
@@ -175,13 +175,6 @@ internal static partial class FormulaReferenceUpdater
         int column = 0;
         foreach (char character in letters.ToUpperInvariant()) column = column * 26 + character - 'A' + 1;
         return column - 1;
-    }
-
-    private static string ColumnName(int index)
-    {
-        var name = string.Empty;
-        for (index++; index > 0; index = (index - 1) / 26) name = (char)('A' + (index - 1) % 26) + name;
-        return name;
     }
 
     private readonly record struct Reference(int Row, int Column, bool FixedRow, bool FixedColumn);

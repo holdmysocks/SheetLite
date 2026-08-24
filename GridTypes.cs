@@ -7,7 +7,6 @@ internal readonly record struct CellAddress(int Row, int Column) : IComparable<C
     public static bool operator >(CellAddress left, CellAddress right) => right < left;
     public int CompareTo(CellAddress other) => this < other ? -1 : other < this ? 1 : 0;
     public CellAddress Offset(int rows, int columns) => new(Row + rows, Column + columns);
-    public bool IsInside(CellRange range) => range.Contains(this);
     public override string ToString() => $"{ColumnName(Column)}{Row + 1}";
 
     public static string ColumnName(int index)
@@ -42,7 +41,6 @@ internal readonly record struct CellRange
     public bool Contains(int row, int column) => row >= Top && row <= Bottom && column >= Left && column <= Right;
     public bool Intersects(CellRange other) => Left <= other.Right && other.Left <= Right && Top <= other.Bottom && other.Top <= Bottom;
     public CellRange Offset(int rows, int columns) => new(Left + columns, Top + rows, Right + columns, Bottom + rows);
-    public bool EqualsSingleCell(CellAddress address) => Width == 1 && Height == 1 && Start == address;
     public override string ToString() => $"{Start}:{End}";
 
     public static CellRange FromSize(int topRow, int leftColumn, int height, int width)

@@ -46,7 +46,7 @@ internal sealed partial class MainForm
 
     private void PushSecondaryUndo()
     {
-        if (secondaryWorkbook is null || secondaryModel is null) return;
+        if (secondaryWorkbook is null || secondaryModel is null) return; FlushPendingEdits(secondaryGrid);
         secondaryWorkbook.ActiveSheet.Sheet = secondaryModel;
         PaneDocumentSession? session = ActiveSecondarySession; if (session is null) return;
         session.Undo.Push(secondaryWorkbook.Clone());
@@ -59,7 +59,7 @@ internal sealed partial class MainForm
         if (secondarySharesPrimary) { Undo(); return; }
         PaneDocumentSession? session = ActiveSecondarySession;
         if (session is null || session.Undo.Count == 0 || secondaryWorkbook is null || secondaryModel is null) return;
-        secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; session.Redo.Push(secondaryWorkbook.Clone());
+        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; session.Redo.Push(secondaryWorkbook.Clone());
         secondaryWorkbook = session.Undo.Pop(); secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); UpdateStatus();
     }
@@ -69,7 +69,7 @@ internal sealed partial class MainForm
         if (secondarySharesPrimary) { Redo(); return; }
         PaneDocumentSession? session = ActiveSecondarySession;
         if (session is null || session.Redo.Count == 0 || secondaryWorkbook is null || secondaryModel is null) return;
-        secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; session.Undo.Push(secondaryWorkbook.Clone());
+        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; session.Undo.Push(secondaryWorkbook.Clone());
         secondaryWorkbook = session.Redo.Pop(); secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); UpdateStatus();
     }
@@ -86,7 +86,7 @@ internal sealed partial class MainForm
     {
         if (index < 0 || index >= primaryDocuments.Count) return; if (index == primaryDocumentIndex) { SetActivePane(false); return; }
         ResolveSortPreviewBeforePrimaryDocumentChange();
-        CapturePrimaryDocument(); primaryDocumentIndex = index; PaneDocumentSession session = primaryDocuments[index];
+        FlushPendingEdits(grid); CapturePrimaryDocument(); primaryDocumentIndex = index; PaneDocumentSession session = primaryDocuments[index];
         workbook = session.Workbook; model = workbook.ActiveSheet.Sheet; path = session.Path; dirty = session.Dirty; undo = session.Undo; redo = session.Redo; filter = null;
         RefreshPrimarySheetTabs(); Render(); RefreshDocumentTabs(); UpdateTitle(); SetActivePane(false);
     }
@@ -108,7 +108,7 @@ internal sealed partial class MainForm
     {
         if (secondarySharesPrimary) { SetActivePane(true); return; }
         if (index < 0 || index >= secondaryDocuments.Count) return; if (index == secondaryDocumentIndex) { SetActivePane(true); return; }
-        CaptureSecondaryDocument(); secondaryDocumentIndex = index; PaneDocumentSession session = secondaryDocuments[index];
+        FlushPendingEdits(secondaryGrid); CaptureSecondaryDocument(); secondaryDocumentIndex = index; PaneDocumentSession session = secondaryDocuments[index];
         secondaryWorkbook = session.Workbook; secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryPath = session.Path; secondaryDirty = session.Dirty;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); SetActivePane(true);
     }
@@ -181,7 +181,7 @@ internal sealed partial class MainForm
         if (loaded.Count == 0) return;
         if (secondary && !splitView.Panel2Collapsed)
         {
-            if (!secondarySharesPrimary) { CaptureSecondaryDocument(); }
+            if (!secondarySharesPrimary) { FlushPendingEdits(secondaryGrid); CaptureSecondaryDocument(); }
             else { secondaryDocuments.Clear(); secondarySharesPrimary = false; }
             int first = secondaryDocuments.Count; secondaryDocuments.AddRange(loaded); secondaryDocumentIndex = first; PaneDocumentSession active = secondaryDocuments[first];
             secondaryWorkbook = active.Workbook; secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryPath = active.Path; secondaryDirty = false; RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); SetActivePane(true);
@@ -189,7 +189,7 @@ internal sealed partial class MainForm
         else
         {
             ResolveSortPreviewBeforePrimaryDocumentChange();
-            CapturePrimaryDocument(); int first = primaryDocuments.Count; primaryDocuments.AddRange(loaded); primaryDocumentIndex = first; PaneDocumentSession active = primaryDocuments[first];
+            FlushPendingEdits(grid); CapturePrimaryDocument(); int first = primaryDocuments.Count; primaryDocuments.AddRange(loaded); primaryDocumentIndex = first; PaneDocumentSession active = primaryDocuments[first];
             workbook = active.Workbook; model = workbook.ActiveSheet.Sheet; path = active.Path; dirty = false; undo = active.Undo; redo = active.Redo; filter = null; ShowEditor(); RefreshPrimarySheetTabs(); Render(); RefreshDocumentTabs(); UpdateTitle(); SetActivePane(false);
         }
     }
