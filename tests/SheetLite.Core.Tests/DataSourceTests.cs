@@ -109,4 +109,54 @@ internal sealed class DataSourceTests
         sheet.SetCellValue(0, 1, "changed");
         Assert.NotSame(context, source.ContextFor(sheet)); // invalidated by version bump
     }
+
+    [Test] public void Changed_is_forwarded_only_from_the_current_provider_sheet()
+    {
+        var first = NewSheet();
+        var second = NewSheet();
+        SheetModel current = first;
+        using var source = new SheetModelDataSource(() => current);
+        var changes = new List<(SheetModel Sheet, WorksheetChangeSet Changes)>();
+        source.Changed += (_, change) => changes.Add((source.Sheet, change));
+
+        first.SetCellValue(0, 0, "first");
+        current = second;
+        source.RefreshBinding();
+        first.SetCellValue(0, 1, "stale");
+        second.SetCellValue(1, 1, "second");
+
+        Assert.Equal(2, changes.Count);
+        Assert.Same(first, changes[0].Sheet);
+        Assert.Same(second, changes[1].Sheet);
+        Assert.True(changes[1].Changes.ChangedAddresses.Contains(new CellAddress(1, 1)));
+    }
+
+    [Test] public void Provider_switch_detected_by_old_notification_suppresses_ghost_event_and_rebinds()
+    {
+        var first = NewSheet();
+        var second = NewSheet();
+        SheetModel current = first;
+        using var source = new SheetModelDataSource(() => current);
+        int eventCount = 0;
+        source.Changed += (_, _) => eventCount++;
+
+        current = second;
+        first.SetCellValue(0, 0, "late old write");
+        second.SetCellValue(0, 0, "new write");
+
+        Assert.Equal(1, eventCount);
+    }
+
+    [Test] public void Dispose_unsubscribes_from_the_bound_sheet()
+    {
+        var sheet = NewSheet();
+        var source = new SheetModelDataSource(() => sheet);
+        int eventCount = 0;
+        source.Changed += (_, _) => eventCount++;
+        source.Dispose();
+
+        sheet.SetCellValue(0, 0, "after dispose");
+
+        Assert.Equal(0, eventCount);
+    }
 }

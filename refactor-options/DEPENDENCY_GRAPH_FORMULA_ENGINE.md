@@ -1,311 +1,145 @@
-# Refactor Option: Dependency-Graph Formula Engine
+# Refactor: Dependency-Graph Formula Engine
 
-Status: Proposed  
-Priority: High before adding substantially more formula functionality  
-Scope: Formula parsing, dependency tracking, recalculation, errors, reference rewriting, and split-view notifications
+Status: Implemented for the scoped single-worksheet engine; cross-sheet and advanced indexing work is deferred
 
-## Objective
+Priority: Complete for the current formula language
 
-Replace repeated full-sheet formula scans with an incremental formula engine that parses formulas into expression trees, records dependencies, caches results, and recalculates only cells affected by an edit.
+Scope: Formula parsing, typed evaluation, dependency tracking, incremental recalculation, mutation events, undo, structural rebuilds, and split-view invalidation
 
-This option should be completed before the formula language grows significantly. It also prepares SheetLite for cross-sheet references and a virtualized grid.
+## Outcome
 
-## Current design and limitation
+SheetLite now parses supported formulas into reusable expression trees and keeps one dependency graph and typed-value cache per `SheetModel`. A normal cell edit updates only the changed formula registrations and recalculates only their direct and transitive dependents. Clean formulas keep their cached results, so an unrelated edit does not reparse or reevaluate them.
 
-The current `FormulaEngine` recursively parses and evaluates formulas. A `FormulaEvaluationContext` memoizes cell results during one batch, which avoids repeated evaluation within that context and detects recursive cycles.
+The worksheet model is the authoritative mutation boundary. It batches paste/fill/replace loops, advances its version once, synchronizes the graph, and publishes one `WorksheetChangeSet` containing the edited addresses plus formula results whose displayed values changed. Both virtual-grid panes subscribe to that event and invalidate only affected visible cells unless a structural change or safety fallback requires a full repaint.
 
-After common edits, `MainForm.RecalculateFormulaCells()` still scans every populated grid cell to find and reevaluate formulas. The parser evaluates while parsing and does not retain a reusable syntax tree or dependency information.
+This implementation deliberately remains single-sheet. `FormulaCellAddress` contains row and column only, worksheet-qualified references are rejected by evaluation, and cross-sheet formulas loaded from XLSX are preserved for round-trip rather than calculated.
 
-Consequences:
+## Implemented architecture
 
-- changing an unrelated cell may reevaluate every formula;
-- dependency information must be rediscovered on every calculation;
-- reference rewriting and evaluation use separate parsing logic;
-- cross-sheet references cannot be represented;
-- the UI normally displays a general `#ERROR!` rather than a typed spreadsheet error;
-- large ranges can make repeated recalculation expensive;
-- both split panes may refresh more cells than necessary.
+### Parsed syntax and typed values
 
-Relevant current code:
+`FormulaSyntax.cs` separates parsing from evaluation. It contains reusable expression nodes for numbers, text, Booleans, unary and binary operators, cell and range references, function calls, and typed errors. `FormulaDependencyExtractor` walks the same tree to collect precedents.
 
-- `FormulaEngine.cs`: recursive parser, evaluator, memoization, and cycle detection.
-- `FormulaReferenceUpdater.cs`: separate formula-reference recognition and rewriting.
-- `MainForm.cs`: `RecalculateFormulaCells()` and formula display updates.
-- `MainForm.DockedTools.cs`: secondary-grid formula refresh and SQL formula evaluation.
+The graph evaluates to `FormulaValue` instances rather than immediately converting everything to strings:
 
-## Proposed architecture
+- `NumberValue`
+- `TextValue`
+- `BooleanValue`
+- `BlankValue`
+- `ErrorValue`
 
-### 1. Parse formulas into an abstract syntax tree
+Supported errors retain their type internally and format specifically as `#DIV/0!`, `#REF!`, `#VALUE!`, `#NAME?`, `#CIRC!`, or `#NUM!`. Display and SQL format typed results at their boundaries; XLSX writes cached typed errors as error cells rather than ordinary strings. The legacy `FormulaEngine` result API remains available as an adapter for existing callers and detailed error messages.
 
-Separate parsing from evaluation. A formula such as:
+### One shared graph per worksheet model
 
-```excel
-=SUM(A1:A10) + B2
-```
+`FormulaEngine` associates one `FormulaDependencyGraph` with each live `SheetModel`. Evaluation contexts and all readers of the same worksheet share that graph instead of creating independent per-pane caches.
 
-should produce reusable nodes similar to:
+Each formula node owns:
 
-```text
-BinaryExpression(+)
-├─ FunctionExpression(SUM)
-│  └─ RangeReferenceExpression(A1:A10)
-└─ CellReferenceExpression(B2)
-```
+- its raw formula and parsed expression;
+- its cell or range precedents;
+- its cached typed result;
+- its dirty state and parse error, if any.
 
-Suggested expression families:
+The graph maintains forward dependency metadata on formula nodes and reverse dependent indexes. Editing a formula removes obsolete reverse edges, registers its new tree and edges, dirties affected dependents, and recalculates the dirty subgraph. Calculation metrics cover parsed formulas, evaluated nodes, cache hits, dirty nodes, range queries, and safety rebuilds.
 
-- numeric, text, and Boolean literals;
-- unary and binary operators;
-- cell references;
-- range references;
-- function calls;
-- typed error expressions where applicable.
+Cycle detection marks every member of a circular component with `#CIRC!`. When a later edit breaks the cycle, the affected nodes are dirtied and recover to ordinary cached values. Evaluation depth is bounded so extreme chains produce a typed error instead of overflowing the process stack.
 
-The same syntax tree should support evaluation, dependency extraction, and reference rewriting after structural worksheet changes.
+### Hybrid range dependencies
 
-### 2. Use stable workbook-level addresses
+Ranges up to the configured threshold expand into exact reverse edges. Larger ranges remain single compact `RangeDependency` records, avoiding one allocation per referenced cell. Aggregate evaluation visits only physically stored cells inside a range, so very tall sparse or reversed ranges remain practical.
 
-Introduce a stable address that includes worksheet identity:
+The compact large-range index is currently a list. A changed cell is checked against that list, which is correct but linear in the number of large-range formulas. An interval tree or comparable scalable range index is deferred.
 
-```csharp
-internal readonly record struct FormulaCellAddress(
-    Guid WorksheetId,
-    int Row,
-    int Column);
-```
+### Authoritative model mutations and events
 
-`WorksheetModel` should receive a persistent ID. Formulas may initially remain limited to the active sheet, but workbook-level addresses allow later support for:
+All supported raw-value and structural changes flow through `SheetModel` mutation methods. `BeginUpdate()` provides nestable batching for operations such as paste, fill, replace, and undo restoration. The outermost batch:
 
-```excel
-=Sheet2!A1
-='Sales Data'!B7
-=SUM(January!A1:A31)
-```
+1. advances the model version once;
+2. sends the complete raw-value update set to the graph, or requests a structural rebuild;
+3. recalculates affected formulas;
+4. publishes one `WorksheetChangeSet` with direct and calculated changes.
 
-Renaming a worksheet should update display text or serialized references without changing graph ownership.
+Adjacent-version mutation tokens prevent an incomplete or out-of-order update from being accepted as incremental state. If the graph detects version divergence, it safely rebuilds and requests a full refresh. Formula reads are rejected while a raw-value batch is still open, preventing callers from observing partially synchronized results.
 
-### 3. Maintain forward and reverse dependencies
+Structural row/column insert, delete, move, and sort operations continue to rewrite formula text through `FormulaReferenceUpdater`. After the structure changes, the graph is rebuilt once from the authoritative worksheet. Undo/redo restores cell batches incrementally and rebuilds after structural restoration.
 
-Each formula node records its precedents, and the engine records reverse dependents:
+`WorksheetModel` now has a stable `Guid` preserved by workbook cloning. Undo entries target that identity, so they continue to find the logical worksheet even if tabs are reordered or workbook snapshots replace model instances.
 
-```csharp
-Dictionary<FormulaCellAddress, FormulaNode> formulas;
-Dictionary<FormulaCellAddress, HashSet<FormulaCellAddress>> dependents;
-```
+### UI and integration boundaries
 
-For these formulas:
+`SheetModelDataSource` forwards model change events and provides contexts backed by the shared graph. `WorksheetPaneController` maps changed model addresses through its pane-specific view and invalidates only visible affected cells. It uses a full repaint for structural/full-refresh events or when a targeted update exceeds the safety threshold. Shared split panes therefore receive the same formula change set without rescanning the worksheet.
 
-```excel
-B1 = A1 * 2
-C1 = B1 + 10
-D1 = SUM(A1:A20)
-```
+SQL reads formula results through a shared evaluation context, so filtering, ordering, and projected results consume the graph cache and receive current formatted typed values. Sorting and filtering likewise use evaluated worksheet values. XLSX export writes native formula text plus the graph's cached result and emits typed formula errors using the Open XML error-cell type.
 
-the graph records:
-
-```text
-B1 depends on A1
-C1 depends on B1
-D1 depends on A1:A20
-
-A1 affects B1 and D1
-B1 affects C1
-```
-
-### 4. Cache evaluated results and track dirty state
-
-A formula node should contain its parsed expression, cached result, dependency metadata, and calculation state:
-
-```csharp
-internal sealed class FormulaNode
-{
-    public required FormulaCellAddress Address { get; init; }
-    public required FormulaExpression Expression { get; init; }
-    public HashSet<FormulaDependency> Precedents { get; } = [];
-    public FormulaValue CachedValue { get; set; }
-    public bool Dirty { get; set; }
-}
-```
-
-When a cell changes, the engine should:
-
-1. update or remove the edited cell's formula node;
-2. remove obsolete dependency edges;
-3. add the new dependency edges;
-4. mark direct and transitive dependents dirty;
-5. recalculate dirty nodes in dependency order;
-6. return the addresses whose displayed values changed.
-
-Both split panes can invalidate only those visible addresses.
-
-### 5. Detect cycles as formulas are registered
-
-The existing evaluator detects recursion during evaluation. The graph should detect cycles when dependency edges are changed and represent them consistently:
-
-```text
-A1 → B1 → C1 → A1
-```
-
-All involved nodes should receive a typed circular-reference result. The engine must also clear that error when an edit breaks the cycle.
-
-### 6. Introduce typed values and errors
-
-Use internal values instead of formatting every result immediately as a string:
-
-```csharp
-internal abstract record FormulaValue;
-internal sealed record NumberValue(decimal Value) : FormulaValue;
-internal sealed record TextValue(string Value) : FormulaValue;
-internal sealed record BooleanValue(bool Value) : FormulaValue;
-internal sealed record BlankValue : FormulaValue;
-internal sealed record ErrorValue(FormulaError Error) : FormulaValue;
-```
-
-Recommended initial errors:
-
-- `#DIV/0!`;
-- `#REF!`;
-- `#VALUE!`;
-- `#NAME?`;
-- `#CIRC!`;
-- `#NUM!`.
-
-Formatting for display, CSV, XLSX, SQL, and status text should happen at integration boundaries. Formula errors should propagate as typed values rather than ordinary strings.
-
-### 7. Index range dependencies
-
-Naively creating one graph edge per cell in `A1:A1000000` is not acceptable. Use a staged design:
-
-First implementation:
-
-- enumerate dependencies for ranges below a safe threshold;
-- store larger ranges as explicit `RangeDependency` objects;
-- query large range dependencies when a cell changes.
-
-Later optimization:
-
-- index ranges by worksheet and row/column interval;
-- use an interval tree or comparable range index;
-- invalidate formulas whose range contains the edited address without scanning every formula.
-
-Structural edits must transform both single-cell and range dependencies.
-
-### 8. Unify reference parsing and rewriting
-
-`FormulaReferenceUpdater` should eventually operate on the parsed syntax tree rather than matching formula text independently. Insert, delete, copy, move, and fill operations can then transform reference nodes while preserving:
-
-- absolute row and column markers;
-- ranges;
-- worksheet qualifiers;
-- string literals that resemble references;
-- valid `#REF!` outcomes.
-
-The original formula text can be regenerated from the transformed tree or preserved through token spans where practical.
-
-### 9. Define calculation events
-
-The engine should expose a narrow API and change notification:
-
-```csharp
-FormulaChangeSet UpdateCell(FormulaCellAddress address, string rawValue);
-FormulaValue GetValue(FormulaCellAddress address);
-IReadOnlyCollection<FormulaCellAddress> RecalculateDirty();
-```
-
-`FormulaChangeSet` should identify changed results and errors. The virtual or existing grid can repaint those cells without scanning the worksheet.
-
-## Migration plan
+## Migration checklist
 
 ### Phase 1: Parser extraction
 
-- [ ] Add expression-tree and typed-value classes.
-- [ ] Convert the existing formula grammar to parse without evaluating.
-- [ ] Evaluate expression trees with parity for current operators and functions.
-- [ ] Retain current public/internal entry points through an adapter.
-- [ ] Add parser tests for whitespace, absolute references, ranges, strings, errors, and invalid input.
+- [x] Add expression-tree and typed-value classes.
+- [x] Convert the existing formula grammar to parse without evaluating.
+- [x] Evaluate expression trees with parity for current operators and functions.
+- [x] Retain current entry points through an adapter.
+- [x] Add parser and evaluator parity tests for whitespace, absolute references, ranges, strings, errors, invalid input, and extreme ranges.
 
 ### Phase 2: Single-sheet dependency graph
 
-- [ ] Add stable worksheet IDs and formula addresses.
-- [ ] Extract precedents from expression trees.
-- [ ] Build forward and reverse graph edges.
-- [ ] Cache results and implement transitive dirty propagation.
-- [ ] Detect, display, and recover from circular references.
-- [ ] Replace `RecalculateFormulaCells()` with change-set recalculation.
+- [x] Create one shared dependency graph per `SheetModel`.
+- [x] Extract precedents from expression trees.
+- [x] Build forward and reverse graph edges.
+- [x] Cache typed results and implement transitive dirty propagation.
+- [x] Detect, display, and recover from circular references.
+- [x] Replace version-wide formula invalidation with calculated change sets.
+- [ ] Add worksheet identity to `FormulaCellAddress` (deferred with cross-sheet references).
 
-### Phase 3: Integrate edits and structural operations
+### Phase 3: Edits, undo, and structural operations
 
-- [ ] Route cell edit, paste, clear, fill, replace, and undo through graph updates.
+- [x] Route cell edit, paste, clear, fill, replace, and undo through authoritative model mutations.
+- [x] Batch raw-value changes, formula synchronization, recalculation, versioning, and event publication.
+- [x] Give `WorksheetModel` stable IDs and target undo entries by logical worksheet identity.
+- [x] Rebuild graph state safely during structural changes, structural undo/redo, workbook replacement, and load.
 - [ ] Transform expression trees during row/column insert, delete, move, copy, and fill.
-- [ ] Replace `FormulaReferenceUpdater` text scanning where feature parity exists.
-- [ ] Rebuild or restore graph state safely during undo/redo and workbook load.
+- [ ] Replace `FormulaReferenceUpdater` text scanning with AST-based rewriting. The regex updater remains in use, followed by a structural graph rebuild.
 
-### Phase 4: Range index and split-view notifications
+### Phase 4: Ranges, panes, and data boundaries
 
-- [ ] Add scalable large-range dependency lookup.
-- [ ] Notify both panes only about affected addresses.
-- [ ] Ensure SQL and sort/filter operations consume cached typed values.
-- [ ] Add calculation batching for large paste and import operations.
+- [x] Keep large ranges compact above a safe expansion threshold.
+- [x] Notify both panes about affected addresses and selectively invalidate visible cells.
+- [x] Ensure SQL, sort, and filter operations consume current cached formula values.
+- [x] Write XLSX cached results from typed graph values, including typed error cells.
+- [x] Batch large paste, fill, replace, restore, and import-style mutation loops.
+- [ ] Replace the large-range list scan with a scalable interval index.
 
 ### Phase 5: Cross-sheet references
 
 - [ ] Parse quoted and unquoted worksheet qualifiers.
-- [ ] Resolve names to stable worksheet IDs.
+- [ ] Resolve formula addresses to stable worksheet IDs.
 - [ ] Update serialized formula text when worksheets are renamed.
-- [ ] Emit `#REF!` when referenced worksheets or cells are deleted.
-- [ ] Support dependencies across worksheet tabs and shared split panes.
+- [ ] Emit `#REF!` when referenced worksheets are deleted.
+- [ ] Support dependency edges and recalculation across worksheet tabs.
 
-## Compatibility requirements
+## Compatibility and acceptance
 
-The first graph-backed release must preserve all currently supported formula behavior:
+The graph-backed engine preserves the currently supported single-sheet behavior:
 
-- arithmetic operators and parentheses;
-- unary signs and exponentiation;
-- cell and range references;
-- absolute-reference syntax accepted by the current parser;
+- arithmetic operators, parentheses, unary signs, and exponentiation;
+- A1 cell and range references with accepted absolute markers;
 - `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, and `CONCAT`;
 - invariant numeric parsing and formatting;
-- circular-reference detection;
-- formula-aware SQL, sorting, filtering, fill, copy/paste, save, and split view.
+- typed and recoverable circular-reference handling;
+- formula-aware SQL, sorting, filtering, fill, copy/paste, XLSX save, undo/redo, and split view.
 
-Cross-sheet references and new functions should be added only after parity is established.
+Tests cover parser/evaluator parity, dependency replacement, transitive recalculation, clean-cache reads, unrelated edits, cycle recovery, deep chains, compact large ranges, batched mutation events, version-divergence fallback, stable undo identity, structural graph rebuilds, selective pane invalidation, SQL results, and XLSX typed cached values.
 
-## Testing and acceptance criteria
+## Deferred work and non-goals
 
-Correctness:
+The following are intentionally not part of the completed single-sheet refactor:
 
-- Existing formula, fill, reference-update, SQL, CSV, XLSX, and UI tests remain green.
-- Editing a precedent recalculates every transitive dependent exactly once per calculation batch.
-- Editing an unrelated cell does not evaluate unaffected formula nodes.
-- Breaking a circular reference clears the circular error and recalculates dependents.
-- Undo/redo restores raw formulas, graph edges, cached values, and errors.
-- Both split panes show recalculated values immediately.
-- Structural row/column edits preserve absolute and relative reference semantics.
+- worksheet-qualified `FormulaCellAddress` values and cross-sheet parsing/evaluation;
+- AST-based reference rewriting; the existing regex updater remains authoritative for structural edits;
+- a scalable interval index for compact large ranges; invalidation currently scans the large-range list;
+- full Excel formula-language compatibility;
+- external workbook references, named ranges, tables, array formulas, or dynamic arrays;
+- iterative circular calculation, volatile-function scheduling, or multithreaded evaluation.
 
-Performance tests:
-
-- A worksheet with many formulas and a small dependency chain recalculates in proportion to the affected chain rather than total formula count.
-- Large paste operations batch invalidation and perform one dependency-ordered recalculation.
-- Large range formulas do not allocate one graph edge per cell above the configured threshold.
-- Repeated reads of a clean formula return its cached typed result.
-
-Instrumentation should count parsed formulas, evaluated nodes, cache hits, dirty nodes, and range-index queries so tests can assert incremental behavior without relying only on elapsed time.
-
-## Risks and mitigations
-
-- **Semantic regression:** preserve the current evaluator behind parity tests until the tree evaluator passes the same corpus.
-- **Graph corruption after structural edits:** centralize every worksheet mutation and validate graph invariants in debug/test builds.
-- **Range-index complexity:** begin with a correct hybrid threshold strategy before implementing an interval tree.
-- **Undo integration:** store raw model changes and rebuild affected graph sections if restoring graph deltas is unsafe initially.
-- **Cross-sheet complexity:** design addresses for it now, but defer user-visible syntax until the single-sheet graph is stable.
-- **Volatile functions:** when functions such as `NOW` or `RAND` are added, mark them explicitly volatile and recalculate them by calculation cycle rather than ordinary dependency invalidation.
-
-## Non-goals for the first implementation
-
-- Full Excel formula-language compatibility.
-- External workbook references.
-- Iterative calculation for intentionally circular models.
-- Array formulas, dynamic arrays, named ranges, or table references.
-- Multi-threaded calculation before deterministic single-threaded graph evaluation is proven.
-
-The first goal is predictable, incremental recalculation with exact parity for SheetLite's existing formula language.
+The delivered goal is predictable incremental recalculation for SheetLite's existing formula language, with safe rebuild fallbacks where structure changes or synchronization cannot be applied incrementally.

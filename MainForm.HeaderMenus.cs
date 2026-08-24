@@ -229,7 +229,7 @@ internal sealed partial class MainForm
     private void DeleteHiddenColumns()
     {
         var hidden = grid.Columns.Cast<DataGridViewColumn>().Where(column => !column.Visible && column.Index < model.ColumnCount).Select(column => column.Index).OrderDescending().ToList(); if (hidden.Count == 0) return;
-        PushUndo(); FormulaReferenceUpdater.DeleteColumns(model, hidden); foreach (var row in model.Rows) foreach (int column in hidden) if (row.Count > 1 && column < row.Count) row.RemoveAt(column); RenderSelect(0, Math.Min(hidden.Min(), model.ColumnCount - 1));
+        PushUndo(); model.DeleteColumns(hidden); RenderSelect(0, Math.Min(hidden.Min(), model.ColumnCount - 1));
     }
 
     private void SortByTextLength(bool ascending)
@@ -289,8 +289,9 @@ internal sealed partial class MainForm
     private void PasteSpecial(List<List<string>> rows)
     {
         if (rows.Count == 0 || grid.CurrentCell is null) return; PushUndo(); int startRow = ModelRow(grid.CurrentCell.RowIndex), startColumn = grid.CurrentCell.ColumnIndex, width = rows.Max(row => row.Count); EnsureGrid(startRow + rows.Count, startColumn + width); loading = true;
-        for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) model.SetCellValue(startRow + row, startColumn + column, rows[row][column]);
-        loading = false; grid.Invalidate(); RecalculateFormulaCells(); SetDirty();
+        using (model.BeginUpdate())
+            for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) model.SetCellValue(startRow + row, startColumn + column, rows[row][column]);
+        loading = false; ReapplyDockedFilterIfActive(); SetDirty();
     }
 
     // ----- split-view (right pane) commands -----
@@ -441,8 +442,10 @@ internal sealed partial class MainForm
         int startRow = SecondaryModelRow(secondaryGrid.CurrentCell.RowIndex), startColumn = secondaryGrid.CurrentCell.ColumnIndex, width = rows.Max(row => row.Count);
         secondaryModel.EnsureSize(startRow + rows.Count, startColumn + width);
         if (secondaryGrid.RowCount < secondaryModel.Rows.Count || secondaryGrid.ColumnCount < secondaryModel.ColumnCount) RenderSecondaryModel(preserveViewport: true);
-        for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) secondaryModel.SetCellValue(startRow + row, startColumn + column, rows[row][column]);
-        secondaryGrid.Invalidate(); RecalculateSecondaryFormulaCells(); MarkSecondaryEdited();
+        using (secondaryModel.BeginUpdate())
+            for (int row = 0; row < rows.Count; row++) for (int column = 0; column < rows[row].Count; column++) secondaryModel.SetCellValue(startRow + row, startColumn + column, rows[row][column]);
+        if (secondarySharesPrimary) ReapplyDockedFilterIfActive(); else ReapplySecondaryFilterIfActive();
+        MarkSecondaryEdited();
     }
 
     private void PasteTransposeSecondary()

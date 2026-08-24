@@ -247,7 +247,7 @@ internal sealed partial class MainForm
         }
         else
         {
-            WorksheetModel moved = source.Sheets[sourceIndex]; string targetName = target.UniqueSheetName(moved.Name); var transferred = new WorksheetModel(targetName, moved.Sheet);
+            WorksheetModel transferred = source.Sheets[sourceIndex]; string targetName = target.UniqueSheetName(transferred.Name); transferred.Name = targetName;
             if (source.Sheets.Count == 1)
             {
                 var blank = new SheetModel(); blank.EnsureSize(100, 26); source.Sheets[0] = new(source.UniqueSheetName("Sheet1", 0), blank); source.ActiveSheetIndex = 0;

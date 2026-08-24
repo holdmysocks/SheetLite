@@ -1,4 +1,6 @@
 using SheetLite;
+using System.IO.Compression;
+using System.Xml.Linq;
 
 namespace SheetLite.Tests;
 
@@ -123,5 +125,40 @@ internal sealed class ModelFirstEditingTests : IDisposable
         Assert.True(cell.Bold);
         Assert.NotNull(cell.BackColor);
         Assert.NotNull(cell.ForeColor);
+    }
+
+    [Test] public void Xlsx_roundtrip_preserves_incrementally_updated_formula_and_cached_result()
+    {
+        WorkbookModel workbook = WorkbookModel.CreateBlank();
+        SheetModel model = workbook.ActiveSheet.Sheet;
+        model.SetCellValue(0, 0, "4");
+        model.SetCellValue(0, 1, "=A1*3");
+        var graph = FormulaEngine.GetGraph(model);
+        graph.ResetMetrics();
+
+        model.SetCellValue(0, 0, "7");
+        Assert.Equal(1, graph.Metrics.EvaluatedNodeCount);
+        Assert.Equal("21", model.EvaluatedValue(0, 1));
+
+        string file = TempPath(".xlsx");
+        XlsxCodec.SaveWorkbook(file, workbook);
+        Assert.True(graph.Metrics.CacheHitCount > 0);
+
+        using (var zip = ZipFile.OpenRead(file))
+        using (var stream = zip.GetEntry("xl/worksheets/sheet1.xml")!.Open())
+        {
+            XNamespace spreadsheet = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            XElement cachedValue = XDocument.Load(stream).Descendants(spreadsheet + "c")
+                .Single(cell => (string?)cell.Attribute("r") == "B1")
+                .Element(spreadsheet + "v")!;
+            Assert.Equal("21", cachedValue.Value);
+        }
+
+        WorkbookModel loaded = XlsxCodec.LoadWorkbook(file);
+        SheetModel reloaded = loaded.ActiveSheet.Sheet;
+        Assert.Equal("=A1*3", reloaded.GetRawValue(0, 1));
+        Assert.Equal("21", reloaded.EvaluatedValue(0, 1));
+        reloaded.SetCellValue(0, 0, "2");
+        Assert.Equal("6", reloaded.EvaluatedValue(0, 1));
     }
 }

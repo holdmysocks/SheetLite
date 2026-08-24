@@ -27,14 +27,14 @@ internal static class SqlQueryEngine
             if (query.Condition is { } condition)
             {
                 var conditionColumn = resolver.Resolve(condition.Column);
-                rows = rows.Where(item => Matches(EvaluatedValueAt(evaluationContext, item.Row, item.Index, conditionColumn), condition.Operator, condition.Value));
+                rows = rows.Where(item => Matches(EvaluatedValueAt(sheet, evaluationContext, item.Index, conditionColumn), condition.Operator, condition.Value));
             }
             if (query.Order is { } order)
             {
                 var orderColumn = resolver.Resolve(order.Column);
                 rows = order.Descending
-                    ? rows.OrderByDescending(item => EvaluatedValueAt(evaluationContext, item.Row, item.Index, orderColumn), CellValueComparer.Instance).ThenBy(item => item.Index)
-                    : rows.OrderBy(item => EvaluatedValueAt(evaluationContext, item.Row, item.Index, orderColumn), CellValueComparer.Instance).ThenBy(item => item.Index);
+                    ? rows.OrderByDescending(item => EvaluatedValueAt(sheet, evaluationContext, item.Index, orderColumn), CellValueComparer.Instance).ThenBy(item => item.Index)
+                    : rows.OrderBy(item => EvaluatedValueAt(sheet, evaluationContext, item.Index, orderColumn), CellValueComparer.Instance).ThenBy(item => item.Index);
             }
             if (query.Limit is { } limit) rows = rows.Take(limit);
 
@@ -42,7 +42,7 @@ internal static class SqlQueryEngine
             {
                 if (column >= item.Row.Count) return new CellModel();
                 var cell = item.Row[column].Clone();
-                cell.Value = EvaluatedValueAt(evaluationContext, item.Row, item.Index, column);
+                cell.Value = EvaluatedValueAt(sheet, evaluationContext, item.Index, column);
                 return cell;
             }).ToList()).ToList();
             return new SqlQueryResult(true, headers, output, null);
@@ -69,14 +69,8 @@ internal static class SqlQueryEngine
         return count;
     }
 
-    private static string EvaluatedValueAt(FormulaEngine.FormulaEvaluationContext context, List<CellModel> row, int rowIndex, int column)
-    {
-        if (column >= row.Count) return "";
-        var raw = row[column].Value;
-        if (!raw.TrimStart().StartsWith('=')) return raw;
-        var result = context.Evaluate(rowIndex, column);
-        return result.Success ? result.Value : "#ERROR!";
-    }
+    private static string EvaluatedValueAt(SheetModel sheet, FormulaEngine.FormulaEvaluationContext context, int rowIndex, int column) =>
+        sheet.EvaluatedValue(rowIndex, column, context);
 
     private static bool Matches(string left, string op, string right)
     {

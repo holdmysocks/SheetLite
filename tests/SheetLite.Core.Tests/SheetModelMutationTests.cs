@@ -53,7 +53,7 @@ internal sealed class SheetModelMutationTests
         sheet.SetCellValue(2, 0, "=A1+A2");
         Assert.Equal("5", sheet.EvaluatedValue(2, 0));
         sheet.SetCellValue(3, 0, "=A1+)");
-        Assert.Equal("#ERROR!", sheet.EvaluatedValue(3, 0));
+        Assert.Equal("#VALUE!", sheet.EvaluatedValue(3, 0));
         Assert.True(sheet.IsFormula(2, 0));
         Assert.False(sheet.IsFormula(0, 0));
     }

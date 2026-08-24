@@ -30,11 +30,22 @@ internal sealed partial class SheetModel
     }
 }
 
-internal sealed class WorksheetModel(string name, SheetModel sheet)
+internal sealed class WorksheetModel
 {
-    public string Name { get; set; } = name;
-    public SheetModel Sheet { get; set; } = sheet;
-    public WorksheetModel Clone() => new(Name, Sheet.Clone());
+    public Guid Id { get; }
+    public string Name { get; set; }
+    public SheetModel Sheet { get; set; }
+
+    public WorksheetModel(string name, SheetModel sheet) : this(Guid.NewGuid(), name, sheet) { }
+
+    private WorksheetModel(Guid id, string name, SheetModel sheet)
+    {
+        Id = id;
+        Name = name;
+        Sheet = sheet;
+    }
+
+    public WorksheetModel Clone() => new(Id, Name, Sheet.Clone());
 }
 
 internal sealed class WorkbookModel
@@ -44,6 +55,8 @@ internal sealed class WorkbookModel
     public WorksheetModel ActiveSheet => Sheets.Count == 0
         ? throw new InvalidOperationException("A workbook must contain at least one worksheet.")
         : Sheets[Math.Clamp(ActiveSheetIndex, 0, Sheets.Count - 1)];
+
+    public WorksheetModel? FindWorksheet(Guid id) => Sheets.FirstOrDefault(sheet => sheet.Id == id);
 
     public static WorkbookModel CreateBlank(string name = "Sheet1")
     {

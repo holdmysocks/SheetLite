@@ -2,7 +2,7 @@
 
 A fast, portable, Dracula-themed CSV and XLSX workbook editor for Windows, built with WinForms on .NET 9. SheetLite ships as a single self-contained executable — no installer, no runtime download, no network access, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.5.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
+![Version](https://img.shields.io/badge/version-0.6.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
 
 ## Overview
 
@@ -34,7 +34,8 @@ Excel-style formulas entered in cells with `=`:
 - Operators: `+ - * / ^`, unary `+/-`, parentheses.
 - A1 references with `$` absolute rows/columns; ranges like `A1:B10`.
 - Functions including arithmetic, aggregates, text, date/time, and logical helpers (see Help → Formula reference in-app).
-- Automatic recalculation after edits, paste, replace, fill, sort, and structural changes; circular-reference detection with typed error display instead of crashes.
+- Incremental recalculation after edits, paste, replace, fill, sort, and structural changes; reusable syntax trees and a per-sheet dependency graph recalculate only affected formulas.
+- Typed formula errors display specifically as `#DIV/0!`, `#REF!`, `#VALUE!`, `#NAME?`, `#CIRC!`, or `#NUM!`; XLSX cached results preserve them as error cells.
 - Reference rewriting: formulas follow inserted/deleted/moved rows and columns and reordered sorts.
 - XLSX save writes native formulas plus cached values; cross-sheet references are preserved (not recalculated) when opening/saving.
 
@@ -144,14 +145,17 @@ SheetLite/
 ├── MainForm.HeaderMenus.cs       # Row/column/cell header context menus
 ├── MainForm.DragDrop.cs          # File drop zones and import targets
 ├── CellModel.cs                  # Cell/Sheet/Workbook models (no UI dependencies)
-├── SheetModelOperations.cs       # Model-first mutation APIs + change versioning for SheetModel
+├── SheetModelOperations.cs       # Authoritative model mutations + change-set undo recording
+├── WorksheetChangeSet.cs         # Batched versioning, graph synchronization, and change events
 ├── GridTypes.cs                  # CellAddress / CellRange / CellEdit / display-value primitives
 ├── WorksheetDataSource.cs        # IWorksheetDataSource, memoizing SheetModelDataSource, WorksheetView
 ├── DocumentTab.cs                # Custom workbook tab control
 ├── ColumnFilterPopup.cs          # Per-column value/condition filter card
 ├── CsvCodec.cs                   # Delimited-text parse/serialize with delimiter detection
 ├── XlsxCodec.cs                  # Minimal Open XML reader/writer for XLSX
-├── FormulaEngine.cs              # Recursive-descent parser/evaluator with memoized context
+├── FormulaEngine.cs              # Compatibility API and shared per-sheet graph ownership
+├── FormulaSyntax.cs              # Reusable formula AST, typed values/errors, dependency extraction
+├── FormulaDependencyGraph.cs     # Incremental dependency graph, dirty propagation, typed cache
 ├── FormulaReferenceUpdater.cs    # A1 reference rewriting for structural edits
 ├── SqlQueryEngine.cs             # Read-only SQL dialect over the active sheet
 ├── Theme.cs / NativeTheme.cs     # Dracula palette, renderers, dark title bar integration
@@ -159,17 +163,18 @@ SheetLite/
 ├── Assets/                       # App icon, titlebar glyphs, embedded resources
 ├── tests/SheetLite.Core.Tests    # Dependency-free test runner for models, primitives, data source
 ├── CODE_REVIEW*.md               # Three rounds of full-source code review documents
-└── refactor-options/             # Proposed large refactors with detailed designs
+└── refactor-options/             # Large-refactor designs, implementation status, and deferred work
 ```
 
 ### Architecture notes
 
 - `WorkbookModel`/`SheetModel` hold immutable-ish cell data; the engines (`FormulaEngine`, `SqlQueryEngine`) operate directly on models so they stay unit-testable and UI-free.
-- Editing is model-first: every cell or structural change goes through `SheetModel`'s mutation APIs (`SheetModelOperations.cs`), bumping a version counter; saving, undo snapshots, sorting, filtering, find/replace, and SQL all read from models, never from grid cells. There is no grid-to-model synchronization pass.
-- Both grids run in `DataGridView.VirtualMode` through one shared `WorksheetPaneController`: rendering builds columns and assigns `RowCount` (O(columns), no per-cell UI objects), `CellValueNeeded` computes display text through the version-memoized `SheetModelDataSource`, edits commit via `CellValuePushed`, and styles come from model formatting in `CellFormatting`. Filtering populates each pane's `WorksheetView` map instead of toggling row-visibility flags.
+- Editing is model-first: every cell or structural change goes through `SheetModel`'s mutation APIs (`SheetModelOperations.cs`). Nested update batches advance the version once, synchronize formulas, and publish one `WorksheetChangeSet`; saving, undo, sorting, filtering, find/replace, and SQL all read from models, never from grid cells.
+- Both grids run in `DataGridView.VirtualMode` through one shared `WorksheetPaneController`: rendering builds columns and assigns `RowCount` (O(columns), no per-cell UI objects), `CellValueNeeded` reads through `SheetModelDataSource`, edits commit via `CellValuePushed`, and styles come from model formatting in `CellFormatting`. Filtering populates each pane's `WorksheetView` map instead of toggling row-visibility flags. Model events selectively invalidate affected visible cells in both panes, with full repaint reserved for structural or safety-fallback changes.
 - Undo/redo records compact cell change-sets (`UndoSteps.cs`) for edits and before/after sheet states for structural commands, falling back to full snapshots only for workbook-shape commands like sheet renames and sort-preview saves.
-- `FormulaEvaluationContext` memoizes cell results within one recalculation batch and detects cycles; render paths share a single context per pass, and `SheetModelDataSource` caches one context per model version for future virtual-mode panes.
-- Undo/redo is snapshot-based (`Stack<WorkbookModel>`), with independent secondary stacks for right-pane documents.
+- `FormulaEngine` owns one `FormulaDependencyGraph` per `SheetModel`. Parsed ASTs, forward/reverse dependencies, dirty propagation, cycle recovery, and typed cached results are shared across evaluation contexts and panes. Small ranges use exact reverse edges; large ranges remain compact and currently use a linear list scan for invalidation.
+- `WorksheetModel` carries a stable ID through cloning, so undo steps still target the logical sheet after tab reordering or workbook replacement. Structural edits continue to use `FormulaReferenceUpdater` and rebuild the graph once; AST-based rewriting is deferred.
+- SQL, sorting, and filtering consume current cached formula results at their boundaries. XLSX export writes native formulas plus cached typed results, using the Open XML error type for formula errors.
 - All destructive keyboard commands route through a single router (`ProcessCmdKey`) that respects overlay/focus state.
 
 ## Documentation
@@ -177,12 +182,12 @@ SheetLite/
 - [`CODE_REVIEW.md`](CODE_REVIEW.md) — Round 1: full review of ~4.3k LOC grouped by severity with concrete fixes.
 - [`CODE_REVIEW_2.md`](CODE_REVIEW_2.md) — Round 2: post-fix verification of Round 1 findings plus new-issue hunt.
 - [`CODE_REVIEW_3.md`](CODE_REVIEW_3.md) — Round 3: verification of Round 2 fixes, regressions, and remaining findings.
-- [`refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md`](refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md) — proposed incremental dependency-graph formula engine (high priority before the formula language grows).
-- [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md) — proposed model-backed virtual grid to make very large files practical.
+- [`refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md`](refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md) — implemented single-sheet dependency-graph engine and explicitly deferred cross-sheet/indexing work.
+- [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md) — implemented model-backed virtual grid design and remaining sparse-storage work.
 
 ## Roadmap
 
-1. Dependency-graph formula engine (incremental recalculation, reusable syntax trees, typed errors, cross-sheet references).
+1. Dependency-graph formula engine — the single-sheet engine is implemented (AST parsing, typed values/errors, cached incremental recalculation, mutation batching, undo/structural rebuild, and selective pane invalidation). Cross-sheet addresses/references, AST-based reference rewriting, and an interval index for large ranges remain deferred. See [`refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md`](refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md).
 2. Virtualized grid for very large CSV/XLSX files — Phases 1–5 are implemented (model-first editing, both panes virtual with view-map filtering, one shared pane controller, change-set undo); sparse cell storage inside `SheetModel` is deferred. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
 3. Address residual findings from Round 3 of the code reviews (e.g., shortcuts that still target the left pane with two independent files).
 

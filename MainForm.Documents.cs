@@ -49,7 +49,7 @@ internal sealed partial class MainForm
         if (secondaryWorkbook is null || secondaryModel is null) return; FlushPendingEdits(secondaryGrid);
         secondaryWorkbook.ActiveSheet.Sheet = secondaryModel;
         PaneDocumentSession? session = ActiveSecondarySession; if (session is null) return;
-        var step = secondaryModel.TakeUndoSegment();
+        var step = secondaryModel.TakeUndoSegment(secondaryWorkbook.ActiveSheet.Id);
         session.Undo.Push(step ?? new WorkbookSnapshotStep(secondaryWorkbook.Clone()));
         if (session.Undo.Count > 40) { var keep = session.Undo.Take(40).Reverse().ToArray(); session.Undo.Clear(); foreach (var snapshot in keep) session.Undo.Push(snapshot); }
         session.Redo.Clear();
@@ -61,7 +61,7 @@ internal sealed partial class MainForm
         PaneDocumentSession? session = ActiveSecondarySession;
         if (session is null || session.Undo.Count == 0 || secondaryWorkbook is null || secondaryModel is null) return;
         FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel;
-        ClosePendingUndoStep(session.Undo, secondaryModel);
+        ClosePendingUndoStep(session.Undo, secondaryWorkbook.ActiveSheet, secondaryModel);
         if (session.Undo.Count == 0) return;
         var step = session.Undo.Pop();
         if (step is WorkbookSnapshotStep snapshot)
@@ -71,11 +71,12 @@ internal sealed partial class MainForm
         }
         else
         {
-            int index = secondaryWorkbook.Sheets.FindIndex(entry => ReferenceEquals(entry.Sheet, step.Sheet));
-            if (index >= 0) secondaryWorkbook.ActiveSheetIndex = index;
-            secondaryModel = secondaryWorkbook.ActiveSheet.Sheet;
+            int index = secondaryWorkbook.Sheets.FindIndex(entry => entry.Id == step.WorksheetId);
+            if (index < 0) { session.Undo.Push(step); countLabel.Text = "Undo unavailable — worksheet no longer exists"; return; }
+            secondaryWorkbook.ActiveSheetIndex = index;
+            secondaryModel = secondaryWorkbook.Sheets[index].Sheet;
             session.Redo.Push(step);
-            step.Undo();
+            step.Undo(secondaryModel);
         }
         secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); UpdateStatus();
@@ -95,11 +96,12 @@ internal sealed partial class MainForm
         }
         else
         {
-            int index = secondaryWorkbook.Sheets.FindIndex(entry => ReferenceEquals(entry.Sheet, step.Sheet));
-            if (index >= 0) secondaryWorkbook.ActiveSheetIndex = index;
-            secondaryModel = secondaryWorkbook.ActiveSheet.Sheet;
+            int index = secondaryWorkbook.Sheets.FindIndex(entry => entry.Id == step.WorksheetId);
+            if (index < 0) { session.Redo.Push(step); countLabel.Text = "Redo unavailable — worksheet no longer exists"; return; }
+            secondaryWorkbook.ActiveSheetIndex = index;
+            secondaryModel = secondaryWorkbook.Sheets[index].Sheet;
             session.Undo.Push(step);
-            step.Redo();
+            step.Redo(secondaryModel);
         }
         secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); UpdateStatus();

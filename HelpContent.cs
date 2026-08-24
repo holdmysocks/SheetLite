@@ -99,7 +99,7 @@ internal static class HelpContent
             "=SUM(B2:B20)\n" +
             "=AVERAGE(C2:C20)\n" +
             "=CONCAT(A2, \" — \", B2)\n\n" +
-            "Formula cells recalculate after editing, paste, replace, fill, sorting, and row/column changes. Circular references and numbers outside the supported decimal range display an error instead of interrupting the app. Cross-sheet references are preserved when opening/saving XLSX but are not calculated by SheetLite. Supported formulas save as native XLSX formulas with cached values."),
+            "Formula cells recalculate after editing, paste, replace, fill, sorting, and row/column changes. Formula errors display specifically as #DIV/0!, #REF!, #VALUE!, #NAME?, #CIRC!, or #NUM! instead of interrupting the app. Cross-sheet references are preserved when opening/saving XLSX but are not calculated by SheetLite. Supported formulas save as native XLSX formulas with cached values, and cached errors are exported as spreadsheet error values."),
 
         new("SQL console",
             "Open View → SQL console, use the database icon, or press Ctrl+`. The docked workspace shows the current workbook, worksheets, and columns on the left and a query editor on the right. Double-click a worksheet or column to insert it. Use the Row 1 is header switch to choose between header names and c1/c2 names. Run with F5, Ctrl+Enter, or the purple play icon. Queries are read-only and results open as an editable result document in the right pane. Formula cells are queried by their calculated values.\n\n" +

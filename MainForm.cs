@@ -520,17 +520,14 @@ internal sealed partial class MainForm : Form
 
     private void OnPrimaryEditFinished(int row, int column)
     {
-        cellEditing = false; HideEditOutline(); UpdateStatus(); grid.Invalidate();
+        cellEditing = false; HideEditOutline(); UpdateStatus();
     }
 
     private void OnPrimaryCellCommitted(int row, int column)
     {
         if (model.IsFormula(row, column)) { var result = FormulaEngine.Evaluate(model, row, column); typeLabel.Text = result.Success ? "Formula" : result.Error ?? "Formula error"; }
-        RecalculateFormulaCells(); SetDirtyCell(row, column);
+        ReapplyDockedFilterIfActive(); SetDirtyCell(row, column);
     }
-
-    /// <summary>Repaint pass: display values are recomputed lazily through the version-keyed data-source context.</summary>
-    private void RecalculateFormulaCells() => grid.Invalidate();
 
     private void SelectHeaderRange(object? sender, DataGridViewCellMouseEventArgs e)
     {
@@ -731,48 +728,50 @@ internal sealed partial class MainForm : Form
         // series math and writes stay in model space (identical behavior when nothing is filtered).
         source = new CellRange(source.Left, ModelRow(source.Top), source.Right, ModelRow(source.Bottom));
         target = new CellRange(target.Left, ModelRow(target.Top), target.Right, ModelRow(target.Bottom));
-        if (target.Bottom > source.Bottom)
+        using (model.BeginUpdate())
         {
-            for (int c = source.Left; c <= source.Right; c++)
+            if (target.Bottom > source.Bottom)
             {
-                var pattern = Enumerable.Range(source.Top, source.Height).Select(r => model.Rows[r][c].Clone()).ToList();
-                for (int r = source.Bottom + 1; r <= target.Bottom; r++) { int offset = r - source.Bottom - 1; SetFilledCell(r, c, pattern, offset, source.Top + offset % source.Height, c); }
+                for (int c = source.Left; c <= source.Right; c++)
+                {
+                    var pattern = Enumerable.Range(source.Top, source.Height).Select(r => model.Rows[r][c].Clone()).ToList();
+                    for (int r = source.Bottom + 1; r <= target.Bottom; r++) { int offset = r - source.Bottom - 1; SetFilledCell(r, c, pattern, offset, source.Top + offset % source.Height, c); }
+                }
+            }
+            else if (target.Top < source.Top)
+            {
+                for (int c = source.Left; c <= source.Right; c++)
+                {
+                    var pattern = Enumerable.Range(source.Top, source.Height).Select(r => model.Rows[r][c].Clone()).ToList();
+                    for (int r = source.Top - 1; r >= target.Top; r--) { int offset = r - source.Top; int patternIndex = Mod(offset, source.Height); SetFilledCell(r, c, pattern, offset, source.Top + patternIndex, c); }
+                }
+            }
+            else if (target.Right > source.Right)
+            {
+                for (int r = source.Top; r <= source.Bottom; r++)
+                {
+                    var pattern = Enumerable.Range(source.Left, source.Width).Select(c => model.Rows[r][c].Clone()).ToList();
+                    for (int c = source.Right + 1; c <= target.Right; c++) { int offset = c - source.Right - 1; SetFilledCell(r, c, pattern, offset, r, source.Left + offset % source.Width); }
+                }
+            }
+            else if (target.Left < source.Left)
+            {
+                for (int r = source.Top; r <= source.Bottom; r++)
+                {
+                    var pattern = Enumerable.Range(source.Left, source.Width).Select(c => model.Rows[r][c].Clone()).ToList();
+                    for (int c = source.Left - 1; c >= target.Left; c--) { int offset = c - source.Left; int patternIndex = Mod(offset, source.Width); SetFilledCell(r, c, pattern, offset, r, source.Left + patternIndex); }
+                }
             }
         }
-        else if (target.Top < source.Top)
-        {
-            for (int c = source.Left; c <= source.Right; c++)
-            {
-                var pattern = Enumerable.Range(source.Top, source.Height).Select(r => model.Rows[r][c].Clone()).ToList();
-                for (int r = source.Top - 1; r >= target.Top; r--) { int offset = r - source.Top; int patternIndex = Mod(offset, source.Height); SetFilledCell(r, c, pattern, offset, source.Top + patternIndex, c); }
-            }
-        }
-        else if (target.Right > source.Right)
-        {
-            for (int r = source.Top; r <= source.Bottom; r++)
-            {
-                var pattern = Enumerable.Range(source.Left, source.Width).Select(c => model.Rows[r][c].Clone()).ToList();
-                for (int c = source.Right + 1; c <= target.Right; c++) { int offset = c - source.Right - 1; SetFilledCell(r, c, pattern, offset, r, source.Left + offset % source.Width); }
-            }
-        }
-        else if (target.Left < source.Left)
-        {
-            for (int r = source.Top; r <= source.Bottom; r++)
-            {
-                var pattern = Enumerable.Range(source.Left, source.Width).Select(c => model.Rows[r][c].Clone()).ToList();
-                for (int c = source.Left - 1; c >= target.Left; c--) { int offset = c - source.Left; int patternIndex = Mod(offset, source.Width); SetFilledCell(r, c, pattern, offset, r, source.Left + patternIndex); }
-            }
-        }
-        loading = false; RecalculateFormulaCells(); grid.ClearSelection();
+        loading = false; grid.ClearSelection();
         for (int r = target.Top; r <= target.Bottom; r++) for (int c = target.Left; c <= target.Right; c++) grid[c, r].Selected = true;
-        SetDirty();
+        ReapplyDockedFilterIfActive(); SetDirty();
     }
 
     private void SetFilledCell(int row, int column, List<CellModel> pattern, int offset, int sourceRow, int sourceColumn)
     {
         var cell = CreateFilledCell(pattern, offset, row, column, sourceRow, sourceColumn);
         model.ReplaceCell(row, column, cell);
-        int displayRow = primaryPane.DisplayRow(row); if (displayRow >= 0) grid.InvalidateCell(column, displayRow);
     }
 
     private static CellModel CreateFilledCell(List<CellModel> pattern, int offset, int row, int column, int sourceRow, int sourceColumn)
@@ -842,13 +841,13 @@ internal sealed partial class MainForm : Form
         if (loading) return;
         FlushPendingEdits(grid);
         if (sortBaselineWorkbook is not null && sortPreviewApplied) SaveSortPreview();
-        ClosePendingUndoStep(undo, model);
+        ClosePendingUndoStep(undo, workbook.ActiveSheet, model);
         redo.Clear();
     }
 
-    private void ClosePendingUndoStep(Stack<IUndoStep> stack, SheetModel sheet)
+    private void ClosePendingUndoStep(Stack<IUndoStep> stack, WorksheetModel worksheet, SheetModel sheet)
     {
-        var step = sheet.TakeUndoSegment();
+        var step = sheet.TakeUndoSegment(worksheet.Id);
         if (step is not null) stack.Push(step);
         if (stack.Count > 80)
         {
@@ -860,14 +859,17 @@ internal sealed partial class MainForm : Form
     private void PushWorkbookStructureUndo()
     {
         workbook.ActiveSheet.Sheet = model;
-        ClosePendingUndoStep(undo, model);
+        ClosePendingUndoStep(undo, workbook.ActiveSheet, model);
         undo.Push(new WorkbookSnapshotStep(workbook.Clone()));
     }
 
-    private void ActivatePrimarySheet(SheetModel sheet)
+    private bool TryActivatePrimarySheet(Guid worksheetId, out SheetModel sheet)
     {
-        int index = workbook.Sheets.FindIndex(entry => ReferenceEquals(entry.Sheet, sheet));
-        if (index >= 0) workbook.ActiveSheetIndex = index;
+        int index = workbook.Sheets.FindIndex(entry => entry.Id == worksheetId);
+        if (index < 0) { sheet = null!; return false; }
+        workbook.ActiveSheetIndex = index;
+        sheet = workbook.Sheets[index].Sheet;
+        return true;
     }
 
     private void Undo()
@@ -878,7 +880,7 @@ internal sealed partial class MainForm : Form
             if (cancelledPreview) { countLabel.Text = "Sort preview reverted"; return; }
         }
         FlushPendingEdits(grid);
-        ClosePendingUndoStep(undo, model);
+        ClosePendingUndoStep(undo, workbook.ActiveSheet, model);
         if (undo.Count == 0) return;
         var step = undo.Pop();
         workbook.ActiveSheet.Sheet = model;
@@ -889,9 +891,12 @@ internal sealed partial class MainForm : Form
         }
         else
         {
-            ActivatePrimarySheet(step.Sheet);
+            if (!TryActivatePrimarySheet(step.WorksheetId, out SheetModel liveSheet))
+            {
+                undo.Push(step); countLabel.Text = "Undo unavailable — worksheet no longer exists"; return;
+            }
             redo.Push(step);
-            step.Undo();
+            step.Undo(liveSheet);
         }
         model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
@@ -913,9 +918,12 @@ internal sealed partial class MainForm : Form
         }
         else
         {
-            ActivatePrimarySheet(step.Sheet);
+            if (!TryActivatePrimarySheet(step.WorksheetId, out SheetModel liveSheet))
+            {
+                redo.Push(step); countLabel.Text = "Redo unavailable — worksheet no longer exists"; return;
+            }
             undo.Push(step);
-            step.Redo();
+            step.Redo(liveSheet);
         }
         model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
@@ -925,9 +933,13 @@ internal sealed partial class MainForm : Form
     {
         if (grid.CurrentCell is null || !Clipboard.ContainsText()) return; PushUndo(); string[][] rows = Clipboard.GetText().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Select(x => x.Split('\t')).ToArray();
         int sr = ModelRow(grid.CurrentCell.RowIndex), sc = grid.CurrentCell.ColumnIndex; EnsureGrid(sr + rows.Length, sc + rows.Max(x => x.Length));
-        loading = true; for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) model.SetCellValue(sr + r, sc + c, rows[r][c]); loading = false; grid.Invalidate(); RecalculateFormulaCells(); SetDirty();    }
+        loading = true;
+        using (model.BeginUpdate())
+            for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) model.SetCellValue(sr + r, sc + c, rows[r][c]);
+        loading = false; ReapplyDockedFilterIfActive(); SetDirty();
+    }
     private void DeleteContents() => DeleteContents(true);
-    private void DeleteContents(bool snapshot) { if (snapshot) PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCellValue(ModelRow(cell.RowIndex), cell.ColumnIndex, ""); grid.Invalidate(); RecalculateFormulaCells(); ReapplyDockedFilterIfActive(); SetDirty(); }
+    private void DeleteContents(bool snapshot) { if (snapshot) PushUndo(); using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCellValue(ModelRow(cell.RowIndex), cell.ColumnIndex, ""); ReapplyDockedFilterIfActive(); SetDirty(); }
 
     private void InsertRow() { int index = ModelRow(grid.CurrentCell?.RowIndex ?? 0); PushUndo(); model.InsertRows(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, grid.CurrentCell?.ColumnIndex ?? 0); }
     private void InsertRowBelow() { int lastDisplay = grid.SelectedCells.Count > 0 ? grid.SelectedCells.Cast<DataGridViewCell>().Max(c => c.RowIndex) : grid.CurrentCell?.RowIndex ?? -1; int index = Math.Min(ModelRow(Math.Max(0, Math.Min(lastDisplay, primaryPane.View.DisplayRowCount - 1))) + 1, model.Rows.Count); PushUndo(); model.InsertRows(index); RenderSelect(Math.Min(index, model.Rows.Count - 1), grid.CurrentCell?.ColumnIndex ?? 0); }
@@ -989,7 +1001,7 @@ internal sealed partial class MainForm : Form
         int column = grid.CurrentCell.ColumnIndex; string value = EvaluatedCellValue(ModelRow(grid.CurrentCell.RowIndex), column);
         ApplyHeaderValueFilter(column, new HashSet<string>(StringComparer.CurrentCultureIgnoreCase) { value });
     }
-    private void ClearFilter() { filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; foreach (DataGridViewRow row in grid.Rows) row.Visible = true; MirrorPrimaryRowVisibilityToSharedSecondary(); grid.Invalidate(); UpdateStatus(); UpdateFindStatus(); }
+    private void ClearFilter() { filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; primaryPane.ResetViewToSheet(); MirrorPrimaryRowVisibilityToSharedSecondary(); grid.Invalidate(); UpdateStatus(); UpdateFindStatus(); }
     private void Freeze() { if (grid.CurrentCell is null) return; model.FrozenRows = grid.CurrentCell.RowIndex; model.FrozenColumns = grid.CurrentCell.ColumnIndex; ApplyFreeze(); SetDirty(); }
     private void Unfreeze() { model.FrozenRows = model.FrozenColumns = 0; ApplyFreeze(); SetDirty(); }
     private void FreezeSelectedRows()
@@ -1012,9 +1024,9 @@ internal sealed partial class MainForm : Form
 
     private void SetBackground() => PickColor(true);
     private void SetForeground() => PickColor(false);
-    private void PickColor(bool background) { using var d = new ColorDialog { FullOpen = true, Color = background ? Theme.Purple : Theme.Foreground }; if (d.ShowDialog(this) != DialogResult.OK) return; PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { var address = new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex); model.SetCell(address, CellEdit.Format(background ? d.Color : null, background ? null : d.Color)); } SetDirty(); }
-    private void ToggleBold() { if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null) return; PushUndo(); bool makeBold = !model.GetCell(ModelRow(grid.CurrentCell.RowIndex), grid.CurrentCell.ColumnIndex).Bold; foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), CellEdit.Format(bold: makeBold)); grid.Invalidate(); SetDirty(); }
-    private void ClearFormatting() { PushUndo(); foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), CellEdit.ResetFormatting()); } grid.Invalidate(); SetDirty(); }
+    private void PickColor(bool background) { using var d = new ColorDialog { FullOpen = true, Color = background ? Theme.Purple : Theme.Foreground }; if (d.ShowDialog(this) != DialogResult.OK) return; PushUndo(); using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) { var address = new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex); model.SetCell(address, CellEdit.Format(background ? d.Color : null, background ? null : d.Color)); } SetDirty(); }
+    private void ToggleBold() { if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null) return; PushUndo(); bool makeBold = !model.GetCell(ModelRow(grid.CurrentCell.RowIndex), grid.CurrentCell.ColumnIndex).Bold; using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), CellEdit.Format(bold: makeBold)); SetDirty(); }
+    private void ClearFormatting() { PushUndo(); using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), CellEdit.ResetFormatting()); } SetDirty(); }
     private void AutoSizeColumns() { foreach (int c in grid.SelectedCells.Cast<DataGridViewCell>().Select(x => x.ColumnIndex).Distinct()) grid.Columns[c].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells; BeginInvoke(() => { foreach (DataGridViewColumn c in grid.Columns) if (c.AutoSizeMode != DataGridViewAutoSizeColumnMode.None) { int w = Math.Min(c.Width, 400); c.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; c.Width = w; } }); }
 
     private void EnsureGrid(int rows, int columns) { if (rows <= grid.RowCount && columns <= grid.ColumnCount) return; FlushPendingEdits(grid); model.EnsureSize(Math.Max(rows, grid.RowCount), Math.Max(columns, grid.ColumnCount)); Render(); }
@@ -1032,7 +1044,7 @@ internal sealed partial class MainForm : Form
             sortBaselineWorkbook = workbook.Clone();
             sortBaselineDirty = true;
         }
-        RefreshSharedSecondaryFromModel(); UpdateTitle(); UpdateStatus();
+        RefreshSharedSecondaryFromModel(); UpdateTitle(); UpdateStatus(); if (findBar.Visible) UpdateFindStatus();
     }
     private void SetDirtyCell(int row, int column)
     {
@@ -1041,7 +1053,7 @@ internal sealed partial class MainForm : Form
         {
             FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; sortBaselineWorkbook = workbook.Clone(); sortBaselineDirty = true;
         }
-        RefreshSharedSecondaryCell(row, column); UpdateTitle(); UpdateStatus();
+        RefreshSharedSecondaryCell(row, column); UpdateTitle(); UpdateStatus(); if (findBar.Visible) UpdateFindStatus();
     }
     private void UpdateTitle() { string name = path is null ? "Untitled" : Path.GetFileName(path); Text = ""; primaryPaneTitle.Text = name; CapturePrimaryDocument(); if (secondarySharesPrimary) secondaryPath = path; RefreshDocumentTabs(); UpdateFileTabChrome(); }
     private void UpdateStatus()

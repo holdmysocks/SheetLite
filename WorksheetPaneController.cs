@@ -7,8 +7,9 @@ namespace SheetLite;
 /// pane simply displays fewer rows while every command keeps working in model
 /// coordinates through <see cref="ModelRow"/>/<see cref="DisplayRow"/>.
 /// </summary>
-internal sealed class WorksheetPaneController
+internal sealed class WorksheetPaneController : IDisposable
 {
+    private const int TargetedInvalidationThreshold = 512;
     public readonly DataGridView Grid;
     public readonly SheetModelDataSource Source;
     public readonly WorksheetView View = WorksheetView.Identity(100, 26);
@@ -18,6 +19,7 @@ internal sealed class WorksheetPaneController
     private CellAddress? editAddress;
     private readonly Func<bool>? mayFlush;
     private readonly ContextMenuStrip? columnHeaderMenu, rowHeaderMenu;
+    private bool disposed;
 
     /// <summary>Raised with model coordinates after a committed cell edit (CellValuePushed).</summary>
     public event Action<int, int>? CellCommitted;
@@ -40,6 +42,8 @@ internal sealed class WorksheetPaneController
         grid.CellFormatting += OnCellFormatting;
         grid.CellBeginEdit += OnBeginEdit;
         grid.CellEndEdit += OnEndEdit;
+        source.Changed += OnSourceChanged;
+        grid.Disposed += OnGridDisposed;
     }
 
     public SheetModel Model => Source.Sheet;
@@ -51,12 +55,28 @@ internal sealed class WorksheetPaneController
     public int DisplayRow(int modelRow) => View.DisplayRowForModelRow(modelRow);
     public bool IsRowVisible(int modelRow) => View.IsRowVisible(modelRow);
 
+    internal IReadOnlyList<(int Column, int Row)> MapChangedCells(WorksheetChangeSet changes)
+    {
+        if (changes.RequiresFullRefresh) return [];
+        var cells = new List<(int Column, int Row)>();
+        foreach (CellAddress address in changes.ChangedAddresses)
+        {
+            int row = View.DisplayRowForModelRow(address.Row);
+            int column = View.DisplayColumnForModelColumn(address.Column);
+            if (row < 0 || column < 0 || row >= Grid.RowCount || column >= Grid.ColumnCount) continue;
+            if (!Grid.Columns[column].Visible || !Grid.Rows[row].Visible) continue;
+            cells.Add((column, row));
+        }
+        return cells;
+    }
+
     // ----- rendering -----
 
     /// <summary>Rebuilds columns for the sheet and sizes the grid from the view map. O(columns); no per-cell UI objects.</summary>
     public void RenderSheet(SheetModel sheet)
     {
         FlushPendingEdits();
+        Source.RefreshBinding();
         int columns = Math.Max(26, sheet.ColumnCount), rows = Math.Max(100, sheet.RowCount);
         sheet.EnsureSize(rows, columns);
         View.Reset(rows, columns);
@@ -102,9 +122,9 @@ internal sealed class WorksheetPaneController
     {
         var sheet = Model;
         if (e.RowIndex < 0 || e.RowIndex >= View.DisplayRowCount || e.ColumnIndex < 0) { e.Value = ""; return; }
-        int row = View.ModelRowForDisplayRow(e.RowIndex);
-        if (row >= sheet.RowCount || e.ColumnIndex >= sheet.Rows.Count || e.ColumnIndex >= sheet.Rows[row].Count) { e.Value = ""; return; }
-        var address = new CellAddress(row, e.ColumnIndex);
+        int row = View.ModelRowForDisplayRow(e.RowIndex), column = View.ModelColumnForDisplayColumn(e.ColumnIndex);
+        if (row >= sheet.RowCount || column >= sheet.Rows[row].Count) { e.Value = ""; return; }
+        var address = new CellAddress(row, column);
         // While a cell is being edited the editor must show the raw source (formula text), not the evaluated result.
         e.Value = editAddress is { } editing && editing == address ? sheet.GetRawValue(address.Row, address.Column) : Source.GetEvaluatedText(address);
     }
@@ -112,25 +132,25 @@ internal sealed class WorksheetPaneController
     private void OnValuePushed(object? sender, DataGridViewCellValueEventArgs e)
     {
         if (e.RowIndex < 0 || e.RowIndex >= View.DisplayRowCount || e.ColumnIndex < 0) return;
-        int row = View.ModelRowForDisplayRow(e.RowIndex);
-        Source.SetCell(new CellAddress(row, e.ColumnIndex), CellEdit.SetValue(e.Value?.ToString() ?? ""));
-        CellCommitted?.Invoke(row, e.ColumnIndex);
+        int row = View.ModelRowForDisplayRow(e.RowIndex), column = View.ModelColumnForDisplayColumn(e.ColumnIndex);
+        Source.SetCell(new CellAddress(row, column), CellEdit.SetValue(e.Value?.ToString() ?? ""));
+        CellCommitted?.Invoke(row, column);
     }
 
     private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
         var sheet = Model;
         if (e.RowIndex < 0 || e.RowIndex >= View.DisplayRowCount || e.ColumnIndex < 0) return;
-        int row = View.ModelRowForDisplayRow(e.RowIndex);
-        if (row >= sheet.RowCount || e.ColumnIndex >= sheet.Rows.Count || e.ColumnIndex >= sheet.Rows[row].Count) return;
-        CellDisplayValue display = Source.GetDisplayValue(new(row, e.ColumnIndex));
+        int row = View.ModelRowForDisplayRow(e.RowIndex), column = View.ModelColumnForDisplayColumn(e.ColumnIndex);
+        if (row >= sheet.RowCount || column >= sheet.Rows[row].Count) return;
+        CellDisplayValue display = Source.GetDisplayValue(new(row, column));
         e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor; e.CellStyle.Font = display.Bold ? BoldFont : RegularFont;
     }
 
     private void OnBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)
     {
         if (e.RowIndex < 0 || e.RowIndex >= View.DisplayRowCount || e.ColumnIndex < 0) return;
-        var address = new CellAddress(View.ModelRowForDisplayRow(e.RowIndex), e.ColumnIndex);
+        var address = new CellAddress(View.ModelRowForDisplayRow(e.RowIndex), View.ModelColumnForDisplayColumn(e.ColumnIndex));
         if (EditStarting is null || !EditStarting(address.Row, address.Column)) { e.Cancel = EditStarting is not null; return; }
         editAddress = address;
     }
@@ -140,6 +160,25 @@ internal sealed class WorksheetPaneController
         if (editAddress is { } address) EditFinished?.Invoke(address.Row, address.Column);
         editAddress = null;
         if (e.RowIndex >= 0 && e.ColumnIndex >= 0) Grid.InvalidateCell(e.ColumnIndex, e.RowIndex);
-        Grid.Invalidate();
+    }
+
+    private void OnSourceChanged(object? sender, WorksheetChangeSet changes)
+    {
+        if (disposed || Grid.IsDisposed) return;
+        if (changes.RequiresFullRefresh) { Grid.Invalidate(); return; }
+        IReadOnlyList<(int Column, int Row)> cells = MapChangedCells(changes);
+        if (cells.Count > TargetedInvalidationThreshold) { Grid.Invalidate(); return; }
+        foreach (var (column, row) in cells) Grid.InvalidateCell(column, row);
+    }
+
+    private void OnGridDisposed(object? sender, EventArgs e) => Dispose();
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        Source.Changed -= OnSourceChanged;
+        Grid.Disposed -= OnGridDisposed;
+        Source.Dispose();
     }
 }

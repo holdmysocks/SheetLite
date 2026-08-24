@@ -112,6 +112,7 @@ internal static class XlsxCodec
     private static string SheetXml(SheetModel sheet, Dictionary<Style, int> styles)
     {
         var data = new XElement(Main + "sheetData");
+        FormulaEngine.FormulaEvaluationContext? formulaContext = null;
         int lastRow = sheet.Rows.FindLastIndex(r => r.Any(c => c.Value.Length > 0 || c.BackColor is not null || c.ForeColor is not null));
         for (int r = 0; r <= lastRow; r++)
         {
@@ -124,8 +125,12 @@ internal static class XlsxCodec
                 var cell = new XElement(Main + "c", new XAttribute("r", CellReference(r, c)), new XAttribute("s", styles[style]));
                 if (value.Value.TrimStart().StartsWith('='))
                 {
-                    var result = FormulaEngine.Evaluate(sheet, r, c); bool numeric = result.Success && double.TryParse(result.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out _); if (!numeric) cell.SetAttributeValue("t", "str");
-                    cell.Add(new XElement(Main + "f", value.Value.TrimStart()[1..])); cell.Add(new XElement(Main + "v", result.Success ? result.Value : "#VALUE!"));
+                    formulaContext ??= FormulaEngine.CreateContext(sheet);
+                    FormulaValue result = formulaContext.EvaluateTyped(r, c);
+                    string cachedValue = FormulaValueFormatter.Format(result);
+                    if (result is ErrorValue) cell.SetAttributeValue("t", "e");
+                    else if (!double.TryParse(cachedValue, NumberStyles.Float, CultureInfo.InvariantCulture, out _)) cell.SetAttributeValue("t", "str");
+                    cell.Add(new XElement(Main + "f", value.Value.TrimStart()[1..])); cell.Add(new XElement(Main + "v", cachedValue));
                 }
                 else if (double.TryParse(value.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out _)) cell.Add(new XElement(Main + "v", value.Value));
                 else if (bool.TryParse(value.Value, out bool flag)) { cell.Add(new XAttribute("t", "b"), new XElement(Main + "v", flag ? "1" : "0")); }

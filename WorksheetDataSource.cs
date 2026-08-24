@@ -6,6 +6,7 @@ namespace SheetLite;
 /// </summary>
 internal interface IWorksheetDataSource
 {
+    event EventHandler<WorksheetChangeSet>? Changed;
     int RowCount { get; }
     int ColumnCount { get; }
     /// <summary>Bumped on every mutation so panes can invalidate only what changed.</summary>
@@ -20,16 +21,23 @@ internal interface IWorksheetDataSource
 /// <summary>An <see cref="IWorksheetDataSource"/> backed by a live <see cref="SheetModel"/>.
 /// The provider indirection lets panes survive undo/redo and worksheet switches, which replace
 /// the underlying <see cref="SheetModel"/> instance.</summary>
-internal sealed class SheetModelDataSource : IWorksheetDataSource
+internal sealed class SheetModelDataSource : IWorksheetDataSource, IDisposable
 {
     private readonly Func<SheetModel> sheetProvider;
     private int cachedVersion = -1;
     private FormulaEngine.FormulaEvaluationContext? evaluationContext;
     private SheetModel? cachedSheet;
+    private bool disposed;
 
-    public SheetModelDataSource(Func<SheetModel> sheetProvider) => this.sheetProvider = sheetProvider;
+    public SheetModelDataSource(Func<SheetModel> sheetProvider)
+    {
+        this.sheetProvider = sheetProvider ?? throw new ArgumentNullException(nameof(sheetProvider));
+        RefreshBinding();
+    }
 
-    public SheetModel Sheet => sheetProvider();
+    public event EventHandler<WorksheetChangeSet>? Changed;
+
+    public SheetModel Sheet => RefreshBinding();
     public int RowCount => Sheet.RowCount;
     public int ColumnCount => Sheet.ColumnCount;
     public int Version => Sheet.Version;
@@ -49,6 +57,42 @@ internal sealed class SheetModelDataSource : IWorksheetDataSource
     }
 
     public void SetCell(CellAddress address, in CellEdit edit) => Sheet.SetCell(address, edit);
+
+    /// <summary>
+    /// Rebinds change forwarding after the provider starts returning another sheet. Calling this is
+    /// harmless when the sheet has not changed and ensures the previous model cannot publish ghost updates.
+    /// </summary>
+    public SheetModel RefreshBinding()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        SheetModel sheet = sheetProvider() ?? throw new InvalidOperationException("The worksheet provider returned null.");
+        if (ReferenceEquals(cachedSheet, sheet)) return sheet;
+        if (cachedSheet is not null) cachedSheet.Changed -= OnSheetChanged;
+        cachedSheet = sheet;
+        cachedVersion = -1;
+        evaluationContext = null;
+        sheet.Changed += OnSheetChanged;
+        return sheet;
+    }
+
+    private void OnSheetChanged(object? sender, WorksheetChangeSet changes)
+    {
+        // A provider may be switched before its host has rendered the new model. Suppress a late
+        // notification from the old model and move the subscription as soon as either model speaks.
+        SheetModel current = sheetProvider();
+        if (!ReferenceEquals(sender, current)) { RefreshBinding(); return; }
+        Changed?.Invoke(this, changes);
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        if (cachedSheet is not null) cachedSheet.Changed -= OnSheetChanged;
+        cachedSheet = null;
+        evaluationContext = null;
+        Changed = null;
+    }
 
     /// <summary>Memoized evaluation context, valid for one data version (one recalculation batch).</summary>
     public FormulaEngine.FormulaEvaluationContext ContextFor(SheetModel sheet)

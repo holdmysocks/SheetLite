@@ -8,10 +8,10 @@
     <Nullable>enable</Nullable>
     <AssemblyName>SheetLite</AssemblyName>
     <RootNamespace>SheetLite</RootNamespace>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Authors>SheetLite Contributors</Authors>
     <Description>A fast, portable, Dracula-themed CSV and XLSX workbook editor for Windows.</Description>
-    <InformationalVersion>0.5.0</InformationalVersion>
+    <InformationalVersion>0.6.0</InformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\sheetlite.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
