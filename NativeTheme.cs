@@ -98,4 +98,46 @@ internal sealed class DraculaRenderer : ToolStripProfessionalRenderer
         e.ArrowColor = Theme.Foreground;
         base.OnRenderArrow(e);
     }
+
+    // Menus must never show per-item borders or a light chrome line, regardless of which
+    // surface (row header, column header, cell editor) hosts the dropdown. Filling item
+    // backgrounds ourselves skips the professional renderer's gradient/border pass entirely.
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+    {
+        Color fill = e.Item.Selected ? Theme.Selection : e.Item.BackColor;
+        if (fill == Color.Empty || fill.A == 0) fill = Theme.Background;
+        using var brush = new SolidBrush(fill);
+        e.Graphics.FillRectangle(brush, new Rectangle(Point.Empty, e.Item.Size));
+    }
+
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+    {
+        using var pen = new Pen(Theme.CurrentLine);
+        e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
+    }
+}
+
+/// <summary>Paint suppression for control rebuilds that would otherwise flash (tab strips, toolbars).</summary>
+internal static class NativeRedraw
+{
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    private const int WM_SETREDRAW = 0x000B;
+
+    public static void Run(Control control, Action body)
+    {
+        control.SuspendLayout();
+        SendMessage(control.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+        try
+        {
+            body();
+        }
+        finally
+        {
+            SendMessage(control.Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+            control.ResumeLayout();
+            control.Invalidate(true);
+        }
+    }
 }

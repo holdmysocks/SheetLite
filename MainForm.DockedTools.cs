@@ -638,20 +638,27 @@ internal sealed partial class MainForm
 
     private void RefreshPrimarySheetTabs()
     {
-        if (primarySheetTabs.IsDisposed) return; primarySheetTabs.SuspendLayout(); primarySheetTabs.Controls.Clear();
-        for (int index = 0; index < workbook.Sheets.Count; index++) primarySheetTabs.Controls.Add(BuildSheetTab(workbook.Sheets[index].Name, index, workbook.ActiveSheetIndex == index, primary: true));
-        var add = ToolButton("＋"); add.AccessibleName = "Add worksheet"; add.Width = 31; add.Height = 25; add.Margin = new Padding(2, 0, 0, 0); add.FlatAppearance.BorderSize = 0; add.BackColor = Theme.Surface; add.Click += (_, _) => AddPrimarySheet(); ConfigureWorksheetBarDrop(add, primary: true); AttachExternalDropTarget(add, FileDropZone.PrimarySheetBar); primarySheetTabs.Controls.Add(add); primarySheetTabs.ResumeLayout();
+        if (primarySheetTabs.IsDisposed) return;
+        NativeRedraw.Run(primarySheetTabs, () =>
+        {
+            primarySheetTabs.Controls.Clear();
+            for (int index = 0; index < workbook.Sheets.Count; index++) primarySheetTabs.Controls.Add(BuildSheetTab(workbook.Sheets[index].Name, index, workbook.ActiveSheetIndex == index, primary: true));
+            var add = ToolButton("＋"); add.AccessibleName = "Add worksheet"; add.Width = 31; add.Height = 25; add.Margin = new Padding(2, 0, 0, 0); add.FlatAppearance.BorderSize = 0; add.BackColor = Theme.Surface; add.Click += (_, _) => AddPrimarySheet(); ConfigureWorksheetBarDrop(add, primary: true); AttachExternalDropTarget(add, FileDropZone.PrimarySheetBar); primarySheetTabs.Controls.Add(add);
+        });
     }
 
     private void RefreshSecondarySheetTabs()
     {
-        secondarySheetTabs.SuspendLayout(); secondarySheetTabs.Controls.Clear();
-        if (secondaryWorkbook is not null) for (int index = 0; index < secondaryWorkbook.Sheets.Count; index++) secondarySheetTabs.Controls.Add(BuildSheetTab(secondaryWorkbook.Sheets[index].Name, index, secondaryWorkbook.ActiveSheetIndex == index, primary: false));
-        if (secondaryWorkbook is not null)
+        if (secondarySheetTabs.IsDisposed) return;
+        NativeRedraw.Run(secondarySheetTabs, () =>
         {
-            var add = ToolButton("＋"); add.AccessibleName = "Add worksheet to right pane"; add.Width = 31; add.Height = 25; add.Margin = new Padding(2, 0, 0, 0); add.FlatAppearance.BorderSize = 0; add.BackColor = Theme.Surface; add.Click += (_, _) => AddSecondarySheet(); ConfigureWorksheetBarDrop(add, primary: false); AttachExternalDropTarget(add, FileDropZone.SecondarySheetBar); secondarySheetTabs.Controls.Add(add);
-        }
-        secondarySheetTabs.ResumeLayout();
+            secondarySheetTabs.Controls.Clear();
+            if (secondaryWorkbook is not null) for (int index = 0; index < secondaryWorkbook.Sheets.Count; index++) secondarySheetTabs.Controls.Add(BuildSheetTab(secondaryWorkbook.Sheets[index].Name, index, secondaryWorkbook.ActiveSheetIndex == index, primary: false));
+            if (secondaryWorkbook is not null)
+            {
+                var add = ToolButton("＋"); add.AccessibleName = "Add worksheet to right pane"; add.Width = 31; add.Height = 25; add.Margin = new Padding(2, 0, 0, 0); add.FlatAppearance.BorderSize = 0; add.BackColor = Theme.Surface; add.Click += (_, _) => AddSecondarySheet(); ConfigureWorksheetBarDrop(add, primary: false); AttachExternalDropTarget(add, FileDropZone.SecondarySheetBar); secondarySheetTabs.Controls.Add(add);
+            }
+        });
     }
 
     private Control BuildSheetTab(string name, int index, bool active, bool primary)

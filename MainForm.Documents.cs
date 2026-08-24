@@ -147,26 +147,31 @@ internal sealed partial class MainForm
     private void RefreshDocumentTabs()
     {
         if (primaryDocumentTabs.IsDisposed || secondaryDocumentTabs.IsDisposed) return;
-        primaryDocumentTabs.SuspendLayout(); primaryDocumentTabs.Controls.Clear();
-        for (int index = 0; index < primaryDocuments.Count; index++)
+        NativeRedraw.Run(primaryDocumentTabs, () =>
         {
-            PaneDocumentSession session = primaryDocuments[index]; var tab = BuildDocumentSessionTab(session.Title, session.Dirty, index == primaryDocumentIndex, primary: true, index); primaryDocumentTabs.Controls.Add(tab); if (index == primaryDocumentIndex) primaryDocumentTab = tab;
-        }
-        primaryDocumentTabs.ResumeLayout();
-
-        secondaryDocumentTabs.SuspendLayout(); secondaryDocumentTabs.Controls.Clear();
-        if (secondarySharesPrimary && !splitView.Panel2Collapsed)
-        {
-            var tab = BuildDocumentSessionTab(path is null ? "Untitled" : Path.GetFileName(path), dirty, true, primary: false, 0, shared: true); secondaryDocumentTabs.Controls.Add(tab); secondaryDocumentTab = tab;
-        }
-        else
-        {
-            for (int index = 0; index < secondaryDocuments.Count; index++)
+            primaryDocumentTabs.Controls.Clear();
+            for (int index = 0; index < primaryDocuments.Count; index++)
             {
-                PaneDocumentSession session = secondaryDocuments[index]; var tab = BuildDocumentSessionTab(session.Title, session.Dirty, index == secondaryDocumentIndex, primary: false, index); secondaryDocumentTabs.Controls.Add(tab); if (index == secondaryDocumentIndex) secondaryDocumentTab = tab;
+                PaneDocumentSession session = primaryDocuments[index]; var tab = BuildDocumentSessionTab(session.Title, session.Dirty, index == primaryDocumentIndex, primary: true, index); primaryDocumentTabs.Controls.Add(tab); if (index == primaryDocumentIndex) primaryDocumentTab = tab;
             }
-        }
-        secondaryDocumentTabs.ResumeLayout(); UpdateFileTabChrome();
+        });
+
+        NativeRedraw.Run(secondaryDocumentTabs, () =>
+        {
+            secondaryDocumentTabs.Controls.Clear();
+            if (secondarySharesPrimary && !splitView.Panel2Collapsed)
+            {
+                var tab = BuildDocumentSessionTab(path is null ? "Untitled" : Path.GetFileName(path), dirty, true, primary: false, 0, shared: true); secondaryDocumentTabs.Controls.Add(tab); secondaryDocumentTab = tab;
+            }
+            else
+            {
+                for (int index = 0; index < secondaryDocuments.Count; index++)
+                {
+                    PaneDocumentSession session = secondaryDocuments[index]; var tab = BuildDocumentSessionTab(session.Title, session.Dirty, index == secondaryDocumentIndex, primary: false, index); secondaryDocumentTabs.Controls.Add(tab); if (index == secondaryDocumentIndex) secondaryDocumentTab = tab;
+                }
+            }
+        });
+        UpdateFileTabChrome();
     }
 
     private DocumentTab BuildDocumentSessionTab(string title, bool dirtyState, bool active, bool primary, int index, bool shared = false)
