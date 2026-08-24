@@ -83,4 +83,18 @@ internal sealed class GridTypesTests
         Assert.Equal("", cell.Value);
         Assert.Equal(Color.Green, cell.ForeColor);
     }
+
+    [Test] public void CellEdit_can_reset_each_color_without_clearing_other_formatting()
+    {
+        var cell = new CellModel { Value = "v", BackColor = Color.Yellow, ForeColor = Color.Blue, Bold = true };
+
+        CellEdit.ResetTextColor().ApplyTo(cell);
+        Assert.Equal(Color.Yellow, cell.BackColor);
+        Assert.Null(cell.ForeColor);
+        Assert.True(cell.Bold);
+
+        CellEdit.ResetBackgroundColor().ApplyTo(cell);
+        Assert.Null(cell.BackColor);
+        Assert.True(cell.Bold);
+    }
 }

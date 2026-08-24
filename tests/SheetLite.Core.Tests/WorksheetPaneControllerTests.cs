@@ -23,6 +23,7 @@ internal sealed class WorksheetPaneControllerTests
         InvokePrivate(pane, "OnCellFormatting", formatting);
         Assert.Equal(Color.Purple, formatting.CellStyle.BackColor);
         Assert.Equal(Color.White, formatting.CellStyle.ForeColor);
+        Assert.Equal(Color.White, formatting.CellStyle.SelectionForeColor);
     }
 
     [Test] public void Change_mapping_uses_the_panes_filtered_row_map_and_skips_hidden_cells()

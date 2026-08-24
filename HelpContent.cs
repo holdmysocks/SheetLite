@@ -159,7 +159,7 @@ internal static class HelpContent
         new("File support and limits",
             "CSV/TSV/TXT: UTF-8 values with comma, tab, semicolon, or pipe delimiter detection. SheetLite reuses the detected delimiter and BOM choice when saving the same document. CSV does not store colors, fonts, column widths, formulas as native formulas, or frozen panes.\n\n" +
             "XLSX: multiple named worksheets, values, supported native formulas, basic background/text colors, bold text, and simultaneous frozen rows/columns.\n\n" +
-            "Current limits: no merged cells, charts, conditional formatting, validation, macros, named ranges, or advanced Excel styling. Column widths are session-only. Commands such as Find, Filter, Sort, Freeze, and formatting target the shared workbook when both panes show it; with two independent files, select the left pane for those commands. Native Windows file, color, and unsaved-change dialogs are retained."),
+            "Current limits: no merged cells, charts, conditional formatting, validation, macros, named ranges, or advanced Excel styling. Column widths are session-only. Commands such as Find, Filter, Sort, Freeze, and formatting target the shared workbook when both panes show it; with two independent files, select the left pane for those commands. Native Windows file and unsaved-change dialogs are retained; cell colors use SheetLite's themed picker."),
 
         new("Privacy and portability",
             "SheetLite is a self-contained Windows x64 executable with no installer. It performs no network requests, collects no telemetry, writes no registry keys, and does not persist a recent-files list. Files are read and written only when you request it.\n\n" +

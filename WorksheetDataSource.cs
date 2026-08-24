@@ -53,7 +53,9 @@ internal sealed class SheetModelDataSource : IWorksheetDataSource, IDisposable
     public CellDisplayValue GetDisplayValue(CellAddress address)
     {
         CellModel cell = Sheet.GetCell(address);
-        return new(GetEvaluatedText(address), cell.BackColor ?? Theme.CellBackground, cell.ForeColor ?? Theme.Foreground, cell.Bold);
+        Color background = cell.BackColor ?? Theme.CellBackground;
+        Color foreground = cell.ForeColor ?? Theme.AdaptiveCellText(background);
+        return new(GetEvaluatedText(address), background, foreground, cell.Bold);
     }
 
     public void SetCell(CellAddress address, in CellEdit edit) => Sheet.SetCell(address, edit);

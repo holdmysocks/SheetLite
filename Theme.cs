@@ -14,4 +14,19 @@ internal static class Theme
     public static readonly Color Foreground = ColorTranslator.FromHtml("#F8F8F2");
     public static readonly Color Comment = ColorTranslator.FromHtml("#8A91A3");
     public static readonly Color Purple = ColorTranslator.FromHtml("#BD93F9");
+
+    /// <summary>Returns whichever neutral text color has the stronger WCAG contrast against <paramref name="background"/>.</summary>
+    public static Color AdaptiveCellText(Color background)
+    {
+        static double Linear(byte channel)
+        {
+            double value = channel / 255D;
+            return value <= 0.04045D ? value / 12.92D : Math.Pow((value + 0.055D) / 1.055D, 2.4D);
+        }
+
+        double luminance = 0.2126D * Linear(background.R) + 0.7152D * Linear(background.G) + 0.0722D * Linear(background.B);
+        double whiteContrast = 1.05D / (luminance + 0.05D);
+        double blackContrast = (luminance + 0.05D) / 0.05D;
+        return blackContrast >= whiteContrast ? Color.Black : Theme.Foreground;
+    }
 }

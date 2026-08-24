@@ -55,18 +55,25 @@ internal readonly struct CellEdit
     public Color? ForeColor { get; init; }
     public bool? Bold { get; init; }
     public bool ClearFormatting { get; init; }
+    public bool ClearBackColor { get; init; }
+    public bool ClearForeColor { get; init; }
 
     public static CellEdit SetValue(string value) => new() { Value = value };
     public static CellEdit ClearValue() => new() { Value = "" };
     public static CellEdit Format(Color? backColor = null, Color? foreColor = null, bool? bold = null) => new() { BackColor = backColor, ForeColor = foreColor, Bold = bold };
     public static CellEdit ResetFormatting() => new() { ClearFormatting = true };
+    public static CellEdit ResetBackgroundColor() => new() { ClearBackColor = true };
+    public static CellEdit ResetTextColor() => new() { ClearForeColor = true };
+    public static CellEdit ResetColors() => new() { ClearBackColor = true, ClearForeColor = true };
 
     public void ApplyTo(CellModel cell)
     {
         if (Value is not null) cell.Value = Value;
         if (ClearFormatting) { cell.BackColor = null; cell.ForeColor = null; cell.Bold = false; return; }
-        if (BackColor is not null) cell.BackColor = BackColor;
-        if (ForeColor is not null) cell.ForeColor = ForeColor;
+        if (ClearBackColor) cell.BackColor = null;
+        else if (BackColor is not null) cell.BackColor = BackColor;
+        if (ClearForeColor) cell.ForeColor = null;
+        else if (ForeColor is not null) cell.ForeColor = ForeColor;
         if (Bold is not null) cell.Bold = Bold.Value;
     }
 }

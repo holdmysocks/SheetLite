@@ -54,8 +54,37 @@ internal sealed class DataSourceTests
 
         Assert.Equal("styled", display.Text);
         Assert.Equal(Color.Purple, display.BackColor);
-        Assert.Equal(Theme.Foreground, display.ForeColor); // unset ForeColor falls back to theme default
+        Assert.Equal(Theme.Foreground, display.ForeColor); // unset ForeColor adapts to the dark theme background
         Assert.True(display.Bold);
+    }
+
+    [Test] public void Default_text_color_adapts_to_custom_cell_background()
+    {
+        var sheet = NewSheet();
+        sheet.SetCell(new CellAddress(0, 0), CellEdit.Format(backColor: Color.White));
+        sheet.SetCell(new CellAddress(0, 1), CellEdit.Format(backColor: Color.Black));
+        using var source = new SheetModelDataSource(() => sheet);
+
+        Assert.Equal(Color.Black, source.GetDisplayValue(new CellAddress(0, 0)).ForeColor);
+        Assert.Equal(Theme.Foreground, source.GetDisplayValue(new CellAddress(0, 1)).ForeColor);
+
+        sheet.SetCell(new CellAddress(0, 0), CellEdit.Format(foreColor: Color.Red));
+        Assert.Equal(Color.Red, source.GetDisplayValue(new CellAddress(0, 0)).ForeColor);
+    }
+
+    [Test] public void Themed_color_picker_parses_hex_colors()
+    {
+        Assert.True(CellColorDialog.TryParseHex("#BD93F9", out Color purple));
+        Assert.Equal(Color.FromArgb(0xBD, 0x93, 0xF9), purple);
+        Assert.True(CellColorDialog.TryParseHex("000000", out Color black));
+        Assert.Equal(Color.Black.ToArgb(), black.ToArgb());
+    }
+
+    [Test] public void Themed_color_picker_rejects_invalid_hex_colors()
+    {
+        Assert.False(CellColorDialog.TryParseHex("", out _));
+        Assert.False(CellColorDialog.TryParseHex("#12345", out _));
+        Assert.False(CellColorDialog.TryParseHex("#GG0000", out _));
     }
 
     [Test] public void GetEvaluatedText_matches_SheetModel_EvaluatedValue_for_all_cell_kinds()

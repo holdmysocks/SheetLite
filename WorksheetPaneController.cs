@@ -143,8 +143,11 @@ internal sealed class WorksheetPaneController : IDisposable
         if (e.RowIndex < 0 || e.RowIndex >= View.DisplayRowCount || e.ColumnIndex < 0) return;
         int row = View.ModelRowForDisplayRow(e.RowIndex), column = View.ModelColumnForDisplayColumn(e.ColumnIndex);
         if (row >= sheet.RowCount || column >= sheet.Rows[row].Count) return;
+        CellModel cell = sheet.Rows[row][column];
         CellDisplayValue display = Source.GetDisplayValue(new(row, column));
-        e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor; e.CellStyle.Font = display.Bold ? BoldFont : RegularFont;
+        e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor;
+        e.CellStyle.SelectionForeColor = cell.ForeColor ?? Theme.AdaptiveCellText(e.CellStyle.SelectionBackColor);
+        e.CellStyle.Font = display.Bold ? BoldFont : RegularFont;
     }
 
     private void OnBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)

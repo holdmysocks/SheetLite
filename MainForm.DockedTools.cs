@@ -387,7 +387,7 @@ internal sealed partial class MainForm
         secondaryGrid.MouseDown += BeginSecondaryFillDrag; secondaryGrid.MouseMove += ContinueSecondaryFillDrag; secondaryGrid.MouseUp += EndSecondaryFillDrag; secondaryGrid.Paint += PaintSecondaryFillPreview;
         secondaryGrid.SelectionChanged += (_, _) => { if (secondaryPaneActive) UpdateStatus(); }; secondaryGrid.CurrentCellChanged += (_, _) => { if (secondaryPaneActive) UpdateStatus(); };
         secondaryGrid.CellParsing += (_, e) => { if (e.Value is not null) { e.Value = e.Value.ToString(); e.ParsingApplied = true; } };
-        secondaryGrid.EditingControlShowing += (_, e) => { if (e.Control is TextBox box) { box.BorderStyle = BorderStyle.None; box.BackColor = Theme.Selection; box.ForeColor = Theme.Foreground; } };
+        secondaryGrid.EditingControlShowing += (_, e) => { if (e.Control is TextBox box) { box.BorderStyle = BorderStyle.None; if (secondaryGrid.CurrentCell is { } cell) { CellDisplayValue display = secondaryPane.Source.GetDisplayValue(new(SecondaryModelRow(cell.RowIndex), cell.ColumnIndex)); box.BackColor = display.BackColor; box.ForeColor = display.ForeColor; } } };
     }
 
     private void PaintSecondaryHeader(object? sender, DataGridViewCellPaintingEventArgs e)
