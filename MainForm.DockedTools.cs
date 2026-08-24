@@ -612,7 +612,7 @@ internal sealed partial class MainForm
     {
         if (sortBaselineWorkbook is not null && sortPreviewApplied)
         {
-            undo.Push(sortBaselineWorkbook.Clone()); if (undo.Count > 40) { var keep = undo.Take(40).Reverse().ToArray(); undo.Clear(); foreach (var snapshot in keep) undo.Push(snapshot); } redo.Clear(); dirty = true; UpdateTitle(); UpdateStatus();
+            undo.Push(new WorkbookSnapshotStep(sortBaselineWorkbook.Clone())); if (undo.Count > 40) { var keep = undo.Take(40).Reverse().ToArray(); undo.Clear(); foreach (var snapshot in keep) undo.Push(snapshot); } redo.Clear(); dirty = true; UpdateTitle(); UpdateStatus();
         }
         sortBaselineWorkbook = null; sortSelectedRows.Clear(); sortPreviewApplied = false; sortPanel.Visible = false; RefreshCommandHost();
     }
@@ -664,7 +664,7 @@ internal sealed partial class MainForm
         var close = ToolButton("×"); close.SetBounds(tab.Width - closeWidth - 1, 2, closeWidth, tab.Height - 3); close.Anchor = AnchorStyles.Top | AnchorStyles.Right; close.FlatAppearance.BorderSize = 0; close.BackColor = tab.BackColor;
         close.Click += (_, _) =>
         {
-            if (primary) { if (workbook.Sheets.Count > 1) DeletePrimarySheet(index); else ClosePrimaryDocumentAt(primaryDocumentIndex); }
+            if (primary) { if (workbook.Sheets.Count > 1) { PushWorkbookStructureUndo(); DeletePrimarySheet(index); } else ClosePrimaryDocumentAt(primaryDocumentIndex); }
             else if (secondaryWorkbook?.Sheets.Count > 1) DeleteSecondarySheet(index);
             else CloseSecondaryDocumentAt(secondaryDocumentIndex);
         };
@@ -677,12 +677,12 @@ internal sealed partial class MainForm
 
     private void AddPrimarySheet()
     {
-        PushUndo(); string name = workbook.NextSheetName(); var sheet = new SheetModel(); sheet.EnsureSize(100, 26); workbook.Sheets.Add(new(name, sheet)); workbook.ActiveSheetIndex = workbook.Sheets.Count - 1; model = sheet; filter = null; RefreshPrimarySheetTabs(); Render(); SetDirty();
+        PushUndo(); PushWorkbookStructureUndo(); string name = workbook.NextSheetName(); var sheet = new SheetModel(); sheet.EnsureSize(100, 26); workbook.Sheets.Add(new(name, sheet)); workbook.ActiveSheetIndex = workbook.Sheets.Count - 1; model = sheet; filter = null; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
 
     private void DeletePrimarySheet(int index)
     {
-        if (workbook.Sheets.Count <= 1 || index < 0 || index >= workbook.Sheets.Count) return; PushUndo();
+        if (workbook.Sheets.Count <= 1 || index < 0 || index >= workbook.Sheets.Count) return; PushUndo(); PushWorkbookStructureUndo();
         workbook.Sheets.RemoveAt(index); if (index < workbook.ActiveSheetIndex) workbook.ActiveSheetIndex--; else if (index == workbook.ActiveSheetIndex) workbook.ActiveSheetIndex = Math.Min(index, workbook.Sheets.Count - 1);
         model = workbook.ActiveSheet.Sheet; filter = null; RefreshPrimarySheetTabs(); Render(); SetDirty(); countLabel.Text = "Worksheet removed — Undo to restore";
     }
@@ -691,14 +691,14 @@ internal sealed partial class MainForm
     {
         if (secondaryWorkbook is null) return;
         if (secondarySharesPrimary) { AddPrimarySheet(); SetActivePane(true); return; }
-        PushSecondaryUndo(); string name = secondaryWorkbook.NextSheetName(); var sheet = new SheetModel(); sheet.EnsureSize(100, 26); secondaryWorkbook.Sheets.Add(new(name, sheet)); secondaryWorkbook.ActiveSheetIndex = secondaryWorkbook.Sheets.Count - 1; secondaryModel = sheet; RenderSecondaryModel(); RefreshSecondarySheetTabs(); SetSecondaryDirty(); SetActivePane(true);
+        PushSecondaryUndo(); if (ActiveSecondarySession is not null && !secondarySharesPrimary) { ClosePendingUndoStep(ActiveSecondarySession.Undo, secondaryModel!); ActiveSecondarySession.Undo.Push(new WorkbookSnapshotStep(secondaryWorkbook.Clone())); } string name = secondaryWorkbook.NextSheetName(); var sheet = new SheetModel(); sheet.EnsureSize(100, 26); secondaryWorkbook.Sheets.Add(new(name, sheet)); secondaryWorkbook.ActiveSheetIndex = secondaryWorkbook.Sheets.Count - 1; secondaryModel = sheet; RenderSecondaryModel(); RefreshSecondarySheetTabs(); SetSecondaryDirty(); SetActivePane(true);
     }
 
     private void DeleteSecondarySheet(int index)
     {
         if (secondaryWorkbook is null || secondaryWorkbook.Sheets.Count <= 1 || index < 0 || index >= secondaryWorkbook.Sheets.Count) return;
         if (secondarySharesPrimary) { DeletePrimarySheet(index); SetActivePane(true); return; }
-        PushSecondaryUndo(); secondaryWorkbook.Sheets.RemoveAt(index); if (index < secondaryWorkbook.ActiveSheetIndex) secondaryWorkbook.ActiveSheetIndex--; else if (index == secondaryWorkbook.ActiveSheetIndex) secondaryWorkbook.ActiveSheetIndex = Math.Min(index, secondaryWorkbook.Sheets.Count - 1); secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; RenderSecondaryModel(); RefreshSecondarySheetTabs(); SetSecondaryDirty(); SetActivePane(true);
+        PushSecondaryUndo(); if (ActiveSecondarySession is not null && !secondarySharesPrimary) { ClosePendingUndoStep(ActiveSecondarySession.Undo, secondaryModel!); ActiveSecondarySession.Undo.Push(new WorkbookSnapshotStep(secondaryWorkbook.Clone())); } secondaryWorkbook.Sheets.RemoveAt(index); if (index < secondaryWorkbook.ActiveSheetIndex) secondaryWorkbook.ActiveSheetIndex--; else if (index == secondaryWorkbook.ActiveSheetIndex) secondaryWorkbook.ActiveSheetIndex = Math.Min(index, secondaryWorkbook.Sheets.Count - 1); secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; RenderSecondaryModel(); RefreshSecondarySheetTabs(); SetSecondaryDirty(); SetActivePane(true);
     }
 
     private void SwitchPrimarySheet(int index)
@@ -719,7 +719,7 @@ internal sealed partial class MainForm
         void Finish(bool save)
         {
             if (completed) return; completed = true;
-            if (save && editor.Text.Trim().Length > 0) { PushUndo(); workbook.Sheets[index].Name = workbook.UniqueSheetName(editor.Text, index); SetDirty(); }
+            if (save && editor.Text.Trim().Length > 0) { PushUndo(); PushWorkbookStructureUndo(); workbook.Sheets[index].Name = workbook.UniqueSheetName(editor.Text, index); SetDirty(); }
             RefreshPrimarySheetTabs();
         }
         editor.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { Finish(true); e.SuppressKeyPress = true; } else if (e.KeyCode == Keys.Escape) { Finish(false); e.SuppressKeyPress = true; } };

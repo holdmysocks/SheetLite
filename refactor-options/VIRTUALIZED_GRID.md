@@ -1,19 +1,22 @@
 # Refactor Option: Virtualized Spreadsheet Grid
 
-Status: In progress — Phase 1 complete, Phase 2 core complete (virtual mode live on both panes)  
+Status: Implemented — Phases 1–4 complete (model-first editing, virtual panes with view maps, one pane controller, change-set undo). Sparse cell storage deferred.  
 Priority: High for very large CSV/XLSX files  
 Scope: Worksheet storage, grid binding, sort/filter views, split view, clipboard, and undo/redo
 
 ## Implementation status (updated)
 
-- `GridTypes.cs` — shared `CellAddress`, `CellRange`, `CellEdit`, and `CellDisplayValue` primitives (the old private nested `MainForm.CellRange` was replaced by the shared type).
-- `SheetModelOperations.cs` — model-first mutation APIs on `SheetModel` (`SetCell`, `SetCellValue`, `ReplaceCell`, `ClearRange`, `InsertRows/Columns`, `DeleteRows/Columns`, `SwapRows/Columns`, `ReorderRows`) plus a monotonic `Version` counter; formula-reference rewriting happens inside these APIs so callers cannot forget it.
-- `WorksheetDataSource.cs` — `IWorksheetDataSource`, the memoizing `SheetModelDataSource` (formula results cached per model version), and `WorksheetView` display↔model maps for filtering/sort previews.
-- **Phase 2 core:** both `DataGridView`s run with `VirtualMode = true` and are bound to `SheetModelDataSource`. `CellValueNeeded` supplies evaluated text (raw formula source while that cell's editor is open), `CellValuePushed` commits edits straight into the model, and `CellFormatting` applies model colors/bold. `Render()`/`RenderSecondaryModel()` are O(columns): they build column definitions and assign `RowCount`; no per-cell UI objects are created. All former value/style copy loops (`ApplyCellCore`, `ApplySecondaryCell`, recalculate passes) are gone — edits invalidate cells/panes and paint recomputes through the version-keyed context. Row-header menus are applied via `RowTemplate`.
-- Saving, undo snapshots, sorting, SQL, find/replace, and filters read only from models (`SyncAll`/`SyncCell`/`SyncSecondaryAll` are deleted); pending editors are flushed via `EndEdit` at every command entry point that previously synced.
-- Tests: `tests/SheetLite.Core.Tests` — dependency-free runner covering primitives, mutations, save/undo-from-model acceptance criteria, the data source, and view maps. Virtual-mode behavior itself needs an interactive smoke pass (unit tests cannot drive WinForms painting/editing).
+- `GridTypes.cs` — shared `CellAddress`, `CellRange`, `CellEdit`, and `CellDisplayValue` primitives.
+- `SheetModelOperations.cs` — model-first mutation APIs (`SetCell`, `SetCellValue`, `ReplaceCell`, `ClearRange`, `InsertRows/Columns`, `DeleteRows/Columns`, `SwapRows/Columns`, `ReorderRows`) with formula-reference rewriting built in, a monotonic `Version` counter, and automatic undo recording: cell edits accumulate as compact change-sets, structural mutations capture a pre-state snapshot of the sheet.
+- `WorksheetDataSource.cs` — `IWorksheetDataSource`, the memoizing `SheetModelDataSource` (formula results cached per model version), and `WorksheetView` display↔model maps.
+- `WorksheetPaneController.cs` — owns each pane's virtual-mode plumbing (value/edit/format callbacks), rendering, pending-edit flushing, and view map; primary and secondary are two instances of one controller.
+- **Virtual mode:** both grids run `VirtualMode = true`. Rendering is O(columns) + `RowCount`; no per-cell UI objects exist. Edits commit through `CellValuePushed`; display values and styles recompute lazily on paint from the version-keyed context.
+- **View maps:** filtering (docked bar, header value/condition filters, hide-selected-rows) populates the pane's `WorksheetView`; the pane simply displays fewer rows. Find, sort-panel selections, duplicate/hidden-row deletion, copy-as, paste anchors, fill ranges, status addresses, and row-header numbers all convert display↔model coordinates, so everything keeps working under an active filter.
+- **Change-set undo:** typing/paste/fill/format produce compact `CellEditsStep` entries instead of workbook clones; structural commands produce `SheetStructureStep` (before/after sheet states); workbook-shape commands (sheet add/delete/rename/reorder, sort-preview save) use `WorkbookSnapshotStep`. Undo/Redo activate the right sheet before applying a step. Memory per edit now scales with edited cells, not sheet size.
+- Saving, sorting, SQL, find/replace, and filters read only from models; there is no grid-to-model synchronization pass anywhere.
+- Tests: `tests/SheetLite.Core.Tests` — dependency-free runner covering primitives, mutations, save/undo-from-model acceptance criteria, the data source, and view maps.
 
-Remaining Phase 2 work: replace row-visible filter flags with `WorksheetView` maps. Then Phase 3 pane-controller consolidation, Phase 4 sparse storage/change-set undo, Phase 5 cleanup.
+Deferred (Phase 4 remainder): sparse row/cell storage inside `SheetModel` — the dense `List<List<CellModel>>` remains; switching engines/codecs to sparse storage should happen once engine-level tests cover it. Interactive smoke pass of virtual editing/filtering/undo is recommended since unit tests cannot drive WinForms painting.
 
 ## Objective
 
@@ -159,7 +162,25 @@ Large pasted ranges may store compressed before/after blocks. Undo stacks should
 - [x] Enable `VirtualMode` on the primary grid (secondary pane too).
 - [x] Implement value, edit, and formatting callbacks.
 - [x] Preserve selection, fill handle, frozen panes, headers, resizing, and context menus (interactive smoke pass still recommended).
-- [ ] Replace primary filtering and sorting with view maps.
+- [x] Replace primary filtering and sorting with view maps.
+
+### Phase 3: Split view
+
+- [x] Extract one pane controller shared by primary and secondary.
+- [x] Bind each pane to its own `IWorksheetDataSource`.
+- [x] Verify cross-pane repaints without full renders (invalidation + version-keyed contexts).
+
+### Phase 4: Sparse storage + change-set undo
+
+- [x] Record cell edits as change-sets instead of cloning the workbook per edit.
+- [x] Structural operations capture before/after sheet states; workbook-shape commands keep full snapshots.
+- [x] Undo/Redo activate the affected sheet before applying a step.
+- [ ] Sparse row/cell storage in `SheetModel` (deferred until engine-level tests cover it).
+
+### Phase 5: Remove legacy synchronization
+
+- [x] Delete grid→model sync passes (`SyncAll`/`SyncCell`/`SyncSecondaryAll`) — done in Phase 1; audits confirm no grid-cell value/tag reads or writes remain outside painting/selection state.
+- [x] Remove dead surface left behind (unused view members, legacy handlers).
 
 ### Phase 3: Split view
 

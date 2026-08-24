@@ -237,6 +237,7 @@ internal sealed partial class MainForm
         {
             if (sourcePrimary || targetPrimary) PushUndo();
             if (!sourcePrimary || !targetPrimary) PushSecondaryUndo();
+            if (sourcePrimary || targetPrimary) PushWorkbookStructureUndo();
         }
         if (!secondarySharesPrimary && secondaryWorkbook is not null && (source == secondaryWorkbook || target == secondaryWorkbook)) { FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel!; }
 

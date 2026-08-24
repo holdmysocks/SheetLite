@@ -40,14 +40,14 @@ internal sealed class WorksheetViewTests
         Assert.False(view.IsRowVisible(3));
     }
 
-    [Test] public void HideColumns_is_independent_of_rows()
+    [Test] public void Hiding_rows_leaves_columns_untouched()
     {
         var view = WorksheetView.Identity(4, 4);
-        view.HideColumns(column => column == 1 || column == 2);
-        Assert.Sequence([0, 3], view.VisibleColumns);
-        Assert.Equal(3, view.ModelColumnForDisplayColumn(1));   // display col 1 -> model col 3
-        Assert.Equal(-1, view.DisplayColumnForModelColumn(1));
-        Assert.Equal(4, view.DisplayRowCount);
+        view.HideRows(row => row == 1 || row == 2);
+        Assert.Equal(4, view.DisplayColumnCount);
+        for (int column = 0; column < 4; column++) Assert.Equal(column, view.ModelColumnForDisplayColumn(column));
+        Assert.Equal(-1, view.DisplayColumnForModelColumn(9));
+        Assert.Equal(2, view.DisplayRowCount);
     }
 
     [Test] public void SetRowOrder_permutes_display_order_without_touching_storage()

@@ -40,7 +40,7 @@ internal sealed partial class MainForm : Form
     private WorkbookModel workbook = WorkbookModel.CreateBlank();
     private SheetModel model;
     private readonly WorksheetPaneController primaryPane, secondaryPane;
-    private Stack<WorkbookModel> undo = new(), redo = new();
+    private Stack<IUndoStep> undo = new(), redo = new();
     private string? path;
     private bool dirty, loading;
     private string? filter;
@@ -830,7 +830,44 @@ internal sealed partial class MainForm : Form
         primaryPane.RenderSheet(model);
         ApplyFreeze(); loading = false; if (grid.RowCount > 0 && grid.ColumnCount > 0) grid.CurrentCell = grid[0, 0]; ReapplyDockedFilterIfActive(); RefreshSharedSecondaryFromModel(); UpdateStatus();
     }
-    private void PushUndo() { if (loading) return; FlushPendingEdits(grid); if (sortBaselineWorkbook is not null && sortPreviewApplied) SaveSortPreview(); workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); if (undo.Count > 40) { var keep = undo.Take(40).Reverse().ToArray(); undo.Clear(); foreach (var x in keep) undo.Push(x); } redo.Clear(); }
+    /// <summary>
+    /// Opens an undo checkpoint. The mutations since the previous checkpoint are captured now
+    /// (cell edits as compact change-sets, structural edits as sheet states); the upcoming
+    /// action's own inverse is captured by its next checkpoint or by its structural marker.
+    /// </summary>
+    private void PushUndo()
+    {
+        if (loading) return;
+        FlushPendingEdits(grid);
+        if (sortBaselineWorkbook is not null && sortPreviewApplied) SaveSortPreview();
+        ClosePendingUndoStep(undo, model);
+        redo.Clear();
+    }
+
+    private void ClosePendingUndoStep(Stack<IUndoStep> stack, SheetModel sheet)
+    {
+        var step = sheet.TakeUndoSegment();
+        if (step is not null) stack.Push(step);
+        if (stack.Count > 80)
+        {
+            var keep = stack.Take(40).Reverse().ToArray(); stack.Clear(); foreach (var x in keep) stack.Push(x);
+        }
+    }
+
+    /// <summary>Full-workbook undo entry for commands that change workbook shape (sheet tabs, renames, reorders).</summary>
+    private void PushWorkbookStructureUndo()
+    {
+        workbook.ActiveSheet.Sheet = model;
+        ClosePendingUndoStep(undo, model);
+        undo.Push(new WorkbookSnapshotStep(workbook.Clone()));
+    }
+
+    private void ActivatePrimarySheet(SheetModel sheet)
+    {
+        int index = workbook.Sheets.FindIndex(entry => ReferenceEquals(entry.Sheet, sheet));
+        if (index >= 0) workbook.ActiveSheetIndex = index;
+    }
+
     private void Undo()
     {
         if (sortBaselineWorkbook is not null)
@@ -838,7 +875,23 @@ internal sealed partial class MainForm : Form
             bool cancelledPreview = sortPreviewApplied; RevertSortPreview();
             if (cancelledPreview) { countLabel.Text = "Sort preview reverted"; return; }
         }
-        if (undo.Count == 0) return; FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; redo.Push(workbook.Clone()); workbook = undo.Pop(); model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
+        FlushPendingEdits(grid);
+        ClosePendingUndoStep(undo, model);
+        if (undo.Count == 0) return;
+        var step = undo.Pop();
+        workbook.ActiveSheet.Sheet = model;
+        if (step is WorkbookSnapshotStep snapshot)
+        {
+            redo.Push(new WorkbookSnapshotStep(workbook.Clone()));
+            workbook = snapshot.Workbook;
+        }
+        else
+        {
+            ActivatePrimarySheet(step.Sheet);
+            redo.Push(step);
+            step.Undo();
+        }
+        model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
     private void Redo()
     {
@@ -847,7 +900,22 @@ internal sealed partial class MainForm : Form
             bool cancelledPreview = sortPreviewApplied; RevertSortPreview();
             if (cancelledPreview) { countLabel.Text = "Sort preview reverted"; return; }
         }
-        if (redo.Count == 0) return; FlushPendingEdits(grid); workbook.ActiveSheet.Sheet = model; undo.Push(workbook.Clone()); workbook = redo.Pop(); model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
+        FlushPendingEdits(grid);
+        if (redo.Count == 0) return;
+        var step = redo.Pop();
+        workbook.ActiveSheet.Sheet = model;
+        if (step is WorkbookSnapshotStep snapshot)
+        {
+            undo.Push(new WorkbookSnapshotStep(workbook.Clone()));
+            workbook = snapshot.Workbook;
+        }
+        else
+        {
+            ActivatePrimarySheet(step.Sheet);
+            undo.Push(step);
+            step.Redo();
+        }
+        model = workbook.ActiveSheet.Sheet; RefreshPrimarySheetTabs(); Render(); SetDirty();
     }
     private void Copy() { if (grid.GetCellCount(DataGridViewElementStates.Selected) > 0 && grid.GetClipboardContent() is DataObject data) Clipboard.SetDataObject(data); }
     private void Cut() { PushUndo(); Copy(); DeleteContents(false); }

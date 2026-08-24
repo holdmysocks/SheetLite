@@ -166,7 +166,8 @@ SheetLite/
 
 - `WorkbookModel`/`SheetModel` hold immutable-ish cell data; the engines (`FormulaEngine`, `SqlQueryEngine`) operate directly on models so they stay unit-testable and UI-free.
 - Editing is model-first: every cell or structural change goes through `SheetModel`'s mutation APIs (`SheetModelOperations.cs`), bumping a version counter; saving, undo snapshots, sorting, filtering, find/replace, and SQL all read from models, never from grid cells. There is no grid-to-model synchronization pass.
-- Both grids run in `DataGridView.VirtualMode`: rendering builds columns and assigns `RowCount` (O(columns), no per-cell UI objects), `CellValueNeeded` computes display text through the version-memoized `SheetModelDataSource`, edits commit via `CellValuePushed`, and styles come from model formatting in `CellFormatting`.
+- Both grids run in `DataGridView.VirtualMode` through one shared `WorksheetPaneController`: rendering builds columns and assigns `RowCount` (O(columns), no per-cell UI objects), `CellValueNeeded` computes display text through the version-memoized `SheetModelDataSource`, edits commit via `CellValuePushed`, and styles come from model formatting in `CellFormatting`. Filtering populates each pane's `WorksheetView` map instead of toggling row-visibility flags.
+- Undo/redo records compact cell change-sets (`UndoSteps.cs`) for edits and before/after sheet states for structural commands, falling back to full snapshots only for workbook-shape commands like sheet renames and sort-preview saves.
 - `FormulaEvaluationContext` memoizes cell results within one recalculation batch and detects cycles; render paths share a single context per pass, and `SheetModelDataSource` caches one context per model version for future virtual-mode panes.
 - Undo/redo is snapshot-based (`Stack<WorkbookModel>`), with independent secondary stacks for right-pane documents.
 - All destructive keyboard commands route through a single router (`ProcessCmdKey`) that respects overlay/focus state.
@@ -182,7 +183,7 @@ SheetLite/
 ## Roadmap
 
 1. Dependency-graph formula engine (incremental recalculation, reusable syntax trees, typed errors, cross-sheet references).
-2. Virtualized grid for very large CSV/XLSX files — Phases 1–2 core are done (model-first editing; both panes run in virtual mode bound to `IWorksheetDataSource`). Remaining: view-map filters/sorts, pane-controller consolidation, sparse storage, change-set undo. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
+2. Virtualized grid for very large CSV/XLSX files — Phases 1–5 are implemented (model-first editing, both panes virtual with view-map filtering, one shared pane controller, change-set undo); sparse cell storage inside `SheetModel` is deferred. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
 3. Address residual findings from Round 3 of the code reviews (e.g., shortcuts that still target the left pane with two independent files).
 
 ## Privacy and portability

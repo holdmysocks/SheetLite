@@ -5,8 +5,8 @@ internal sealed class PaneDocumentSession(WorkbookModel workbook, string? path =
     public WorkbookModel Workbook { get; set; } = workbook;
     public string? Path { get; set; } = path;
     public bool Dirty { get; set; } = dirty;
-    public Stack<WorkbookModel> Undo { get; set; } = new();
-    public Stack<WorkbookModel> Redo { get; set; } = new();
+    public Stack<IUndoStep> Undo { get; set; } = new();
+    public Stack<IUndoStep> Redo { get; set; } = new();
     public string Title => Path is null ? "Untitled" : System.IO.Path.GetFileName(Path);
 }
 
@@ -49,7 +49,8 @@ internal sealed partial class MainForm
         if (secondaryWorkbook is null || secondaryModel is null) return; FlushPendingEdits(secondaryGrid);
         secondaryWorkbook.ActiveSheet.Sheet = secondaryModel;
         PaneDocumentSession? session = ActiveSecondarySession; if (session is null) return;
-        session.Undo.Push(secondaryWorkbook.Clone());
+        var step = secondaryModel.TakeUndoSegment();
+        session.Undo.Push(step ?? new WorkbookSnapshotStep(secondaryWorkbook.Clone()));
         if (session.Undo.Count > 40) { var keep = session.Undo.Take(40).Reverse().ToArray(); session.Undo.Clear(); foreach (var snapshot in keep) session.Undo.Push(snapshot); }
         session.Redo.Clear();
     }
@@ -59,8 +60,24 @@ internal sealed partial class MainForm
         if (secondarySharesPrimary) { Undo(); return; }
         PaneDocumentSession? session = ActiveSecondarySession;
         if (session is null || session.Undo.Count == 0 || secondaryWorkbook is null || secondaryModel is null) return;
-        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; session.Redo.Push(secondaryWorkbook.Clone());
-        secondaryWorkbook = session.Undo.Pop(); secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
+        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel;
+        ClosePendingUndoStep(session.Undo, secondaryModel);
+        if (session.Undo.Count == 0) return;
+        var step = session.Undo.Pop();
+        if (step is WorkbookSnapshotStep snapshot)
+        {
+            session.Redo.Push(new WorkbookSnapshotStep(secondaryWorkbook.Clone()));
+            secondaryWorkbook = snapshot.Workbook;
+        }
+        else
+        {
+            int index = secondaryWorkbook.Sheets.FindIndex(entry => ReferenceEquals(entry.Sheet, step.Sheet));
+            if (index >= 0) secondaryWorkbook.ActiveSheetIndex = index;
+            secondaryModel = secondaryWorkbook.ActiveSheet.Sheet;
+            session.Redo.Push(step);
+            step.Undo();
+        }
+        secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); UpdateStatus();
     }
 
@@ -69,8 +86,22 @@ internal sealed partial class MainForm
         if (secondarySharesPrimary) { Redo(); return; }
         PaneDocumentSession? session = ActiveSecondarySession;
         if (session is null || session.Redo.Count == 0 || secondaryWorkbook is null || secondaryModel is null) return;
-        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel; session.Undo.Push(secondaryWorkbook.Clone());
-        secondaryWorkbook = session.Redo.Pop(); secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
+        FlushPendingEdits(secondaryGrid); secondaryWorkbook.ActiveSheet.Sheet = secondaryModel;
+        var step = session.Redo.Pop();
+        if (step is WorkbookSnapshotStep snapshot)
+        {
+            session.Undo.Push(new WorkbookSnapshotStep(secondaryWorkbook.Clone()));
+            secondaryWorkbook = snapshot.Workbook;
+        }
+        else
+        {
+            int index = secondaryWorkbook.Sheets.FindIndex(entry => ReferenceEquals(entry.Sheet, step.Sheet));
+            if (index >= 0) secondaryWorkbook.ActiveSheetIndex = index;
+            secondaryModel = secondaryWorkbook.ActiveSheet.Sheet;
+            session.Undo.Push(step);
+            step.Redo();
+        }
+        secondaryModel = secondaryWorkbook.ActiveSheet.Sheet; secondaryDirty = session.Dirty = true; session.Workbook = secondaryWorkbook;
         RefreshSecondarySheetTabs(); RenderSecondaryModel(); RefreshDocumentTabs(); UpdateSecondaryTitle(); UpdateStatus();
     }
 

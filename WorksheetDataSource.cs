@@ -99,11 +99,6 @@ internal sealed class WorksheetView
         RebuildRowIndex();
     }
 
-    public void HideColumns(Func<int, bool> predicate)
-    {
-        visibleColumns.RemoveAll(new Predicate<int>(predicate));
-    }
-
     /// <summary>
     /// Reorders displayed rows. <paramref name="modelRowsInDisplayOrder"/> must be a permutation of the
     /// currently visible model rows; hidden rows stay hidden and storage is untouched.
