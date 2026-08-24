@@ -55,6 +55,7 @@ coverage.*
 BenchmarkDotNet.Artifacts/
 
 # Publish / packaging output for the single-file app
+/dist/
 SheetLite*.zip
 *.appx
 
