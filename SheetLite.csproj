@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SheetLite</AssemblyName>
+    <RootNamespace>SheetLite</RootNamespace>
+    <Version>0.4.0</Version>
+    <Authors>SheetLite Contributors</Authors>
+    <Description>A fast, portable, Dracula-themed CSV and XLSX workbook editor for Windows.</Description>
+    <InformationalVersion>0.4.0</InformationalVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\sheetlite.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\sheetlite-icon.png" />
+    <EmbeddedResource Include="Assets\window-minimize.png" />
+    <EmbeddedResource Include="Assets\window-maximize.png" />
+    <EmbeddedResource Include="Assets\window-close.png" />
+  </ItemGroup>
+</Project>
