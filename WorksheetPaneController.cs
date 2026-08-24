@@ -12,8 +12,8 @@ internal sealed class WorksheetPaneController
     public readonly DataGridView Grid;
     public readonly SheetModelDataSource Source;
     public readonly WorksheetView View = WorksheetView.Identity(100, 26);
-    public Font RegularFont { get; set; } = SystemFonts.MessageBoxFont;
-    public Font BoldFont { get; set; } = SystemFonts.MessageBoxFont;
+    public Font RegularFont { get; set; } = SystemFonts.MessageBoxFont!;
+    public Font BoldFont { get; set; } = SystemFonts.MessageBoxFont!;
 
     private CellAddress? editAddress;
     private readonly Func<bool>? mayFlush;
