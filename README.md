@@ -1,200 +1,81 @@
 # SheetLite
 
-A fast, portable, Dracula-themed CSV and XLSX workbook editor for Windows, built with WinForms on .NET 9. SheetLite ships as a single self-contained executable — no installer, no runtime download, no network access, no telemetry.
+A fast, portable CSV and XLSX workbook editor for Windows, built with WinForms on .NET 9.
 
-![Version](https://img.shields.io/badge/version-0.6.0-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
+![GitHub Release](https://img.shields.io/github/v/release/holdmysocks/SheetLite?label=version) ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey) ![.NET](https://img.shields.io/badge/.NET-9.0-purple)
 
-## Overview
-
-SheetLite is a lightweight spreadsheet application for quickly viewing and editing delimited text files and Excel workbooks. It focuses on the core editing workflow — open, inspect, edit, formula-calculate, sort, filter, and save — with a custom borderless window and a consistent Dracula dark theme throughout the chrome, menus, grid, dialogs, and docked tools.
-
-Key design traits:
-
-- **Portable**: one `win-x64` self-contained executable (`PublishSingleFile` + `ReadyToRun`), unsigned, no installer.
-- **Private by default**: performs no network requests, collects no telemetry, writes no registry keys, and does not persist a recent-files list.
-- **Model/UI separation**: workbook/sheet models and the formula/SQL engines are plain C# classes with no UI dependencies; all Windows Forms code lives in the `MainForm*` partials and small controls.
-- **Zero external NuGet packages** for the app itself: CSV parsing, XLSX (Open XML) read/write, formula evaluation, and SQL querying are implemented in-repo.
+SheetLite is distributed as a single self-contained executable. It has no installer, requires no separate .NET runtime, stores no recent-file history, and sends no telemetry. On startup it makes one request to GitHub Releases to check whether a newer version is available.
 
 ## Features
 
-### Editing
+- Edit CSV, TSV, TXT, and XLSX files.
+- Work with multiple workbooks and worksheets.
+- Use formulas, sorting, filtering, find/replace, undo/redo, and split view.
+- Query the current workbook with a small read-only SQL dialect.
+- Copy and paste CSV, tabular text, Markdown, HTML, JSON, and SQL values.
+- Preserve XLSX formulas, cached results, basic colors, bold text, and frozen panes.
+- Run as a portable, self-contained Windows x64 executable.
 
-- Grid editing with cell/range selection, cut/copy/paste, clear contents, undo/redo.
-- Multiple open workbooks as reorderable document tabs; multiple worksheets per workbook with add/remove/rename/reorder.
-- Split view (`Ctrl+Alt+S`) with a second pane: either a shared view of the active workbook or an independently opened file with its own undo/redo stacks.
-- Drag and drop files from Explorer onto the welcome screen, the grid, or the worksheet bar to open or import workbooks.
-- Find & Replace (docked), row/column insert/delete/move, freeze panes, hide/unhide columns, auto-fit column widths.
-- Fill handle: drag to extend number/date series or copy cells; formulas adjust relative references automatically.
-- Bold formatting and per-cell background/text colors (XLSX round-trip).
+Current limits: SheetLite does not support merged cells, charts, conditional formatting, validation, macros, named ranges, or advanced XLSX styling. Column widths are session-only.
 
-### Formulas
+## Download
 
-Excel-style formulas entered in cells with `=`:
+Download the newest `SheetLite-*-win-x64.zip` from [GitHub Releases](https://github.com/holdmysocks/SheetLite/releases/latest), extract it, and run `SheetLite.exe`.
 
-- Operators: `+ - * / ^`, unary `+/-`, parentheses.
-- A1 references with `$` absolute rows/columns; ranges like `A1:B10`.
-- Functions including arithmetic, aggregates, text, date/time, and logical helpers (see Help → Formula reference in-app).
-- Incremental recalculation after edits, paste, replace, fill, sort, and structural changes; reusable syntax trees and a per-sheet dependency graph recalculate only affected formulas.
-- Typed formula errors display specifically as `#DIV/0!`, `#REF!`, `#VALUE!`, `#NAME?`, `#CIRC!`, or `#NUM!`; XLSX cached results preserve them as error cells.
-- Reference rewriting: formulas follow inserted/deleted/moved rows and columns and reordered sorts.
-- XLSX save writes native formulas plus cached values; cross-sheet references are preserved (not recalculated) when opening/saving.
+The executable is currently unsigned, so Windows SmartScreen may show a warning on first launch. A SHA-256 checksum is included with every release.
 
-Example: `=SUM(A1:A10) * $B$1`, `=CONCAT(A2, " — ", B2)`.
+## Build
 
-### SQL console
-
-A deliberately small, read-only SQL dialect over the current workbook (`View → SQL console`, `Ctrl+\``):
-
-```sql
-SELECT c1, c2 FROM worksheet WHERE c2 > 100 ORDER BY c1 DESC LIMIT 20
-```
-
-- Queries run against calculated formula values.
-- Results open as an editable result document in the right pane; use Save As to keep them.
-- Double-click worksheets/columns in the sidebar to insert names into the query.
-
-### Sorting and filtering
-
-- Quick sort current column with `Ctrl+Up` / `Ctrl+Down`.
-- Advanced multi-key sort with preview: Save keeps it; Revert restores the exact pre-sort workbook, including dirty state.
-- Docked filter bar and a per-column quick-filter card supporting filter-by-values (with search) and filter-by-condition operators.
-- Column context menus expose sort variants, insert/delete/move, copy/paste-as, freeze, hide, and auto-size commands.
-
-### Clipboard interop
-
-Copy As and Paste As between formats:
-
-- **Copy As:** CSV, raw tabular values, Markdown (± header), HTML (± header), JSON arrays, JSON objects, SQL INSERT statements.
-- **Paste As:** CSV/delimited text, Markdown tables, JSON arrays/objects, transposed tabular ranges.
-
-## Supported file formats
-
-| Format | Read | Write | Notes |
-|--------|------|-------|-------|
-| CSV    | ✅   | ✅    | Delimiter detection (comma, tab, semicolon, pipe); delimiter/BOM reused on save |
-| TSV/TXT| ✅   | ✅    | Same delimited pipeline |
-| XLSX   | ✅   | ✅    | Multiple sheets, native formulas + cached values, basic colors/bold, frozen panes |
-
-Current limits: no merged cells, charts, conditional formatting, validation, macros, named ranges, or advanced styling; column widths are session-only.
-
-## Getting started
-
-### Prerequisites
-
-- Windows 10/11 x64
-- .NET 9 SDK (to build)
-
-### Build and run
+Requirements: Windows 10/11 x64 and the .NET 9 SDK.
 
 ```powershell
 dotnet build -c Release
 dotnet run -c Release
 ```
 
-### Run the tests
-
-The core model, primitives, data source, and view maps are covered by a dependency-free test runner (no NuGet packages needed):
+Run the dependency-free test suite with:
 
 ```powershell
 dotnet run --project tests/SheetLite.Core.Tests -c Release
 ```
 
-The suite exits non-zero when a test fails, so it can be used in scripts or CI.
-
-### Publish a single-file executable
-
-The project is preconfigured for a compressed, self-contained, ReadyToRun single-file build:
+Create the self-contained executable with:
 
 ```powershell
 dotnet publish -c Release
-# Output: bin\Release\net9.0-windows\win-x64\publish\SheetLite.exe
 ```
 
-The executable is unsigned, so SmartScreen may warn on first launch; verify a SHA-256 checksum before trusting builds from third parties.
+The executable is written to `bin\Release\net9.0-windows\win-x64\publish\SheetLite.exe`.
 
-## Keyboard shortcuts
+## Releases
 
-| Keys | Action |
-|------|--------|
-| `F1` | Help |
-| `Ctrl+N` | New spreadsheet |
-| `Ctrl+O` / `Ctrl+Shift+O` | Open file in active pane / Open another workbook tab |
-| `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
-| `Ctrl+Shift+T` | Sort setup |
-| `Ctrl+Shift+Arrows` | Insert row above/below, column left/right |
-| `Ctrl+Subtract` / `Ctrl+Shift+Subtract` | Delete selected rows/columns |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+F` / `Ctrl+H` | Find / Replace |
-| `Ctrl+L` / `Ctrl+Shift+L` | Filter / Clear filter |
-| `Ctrl+Up` / `Ctrl+Down` | Quick sort current column |
-| `` Ctrl+` `` | SQL console |
-| `Ctrl+Alt+S` | Split view |
-| `Ctrl+Shift+F` | Freeze at current cell |
-| `Ctrl+B` | Toggle bold |
-| `Alt+Arrows` | Move selected row/column |
+`SheetLite.csproj` is the source of truth for the app version. To publish a release:
 
-## Project structure
+1. Change `<Version>` to a new `major.minor.patch` value.
+2. Commit and push the change to `main`.
 
+The release workflow runs the tests, publishes the self-contained Windows app, creates a ZIP and SHA-256 checksum, tags the commit, and creates a GitHub release with generated notes. If that version already exists, the workflow exits without replacing it. It can also be started manually from the Actions tab.
+
+## Update checks and privacy
+
+After the main window opens, SheetLite requests the latest public release metadata from `api.github.com`. If a newer stable release exists, it asks before opening the release page in the default browser. Failed checks are silent during startup, and no files or usage data are uploaded. You can run the check manually from **Help → Check for updates**.
+
+## Project layout
+
+```text
+SheetLite.csproj                 App metadata and publish settings
+Program.cs                       Entry point and error handling
+MainForm*.cs                     Windows UI and application commands
+CellModel.cs                     Workbook and worksheet models
+Formula*.cs                      Formula parsing, evaluation, and references
+CsvCodec.cs / XlsxCodec.cs       File format readers and writers
+SqlQueryEngine.cs                Read-only workbook SQL
+UpdateChecker.cs                 GitHub release update check
+Assets/                          App icon and window graphics
+tests/SheetLite.Core.Tests/      Dependency-free test suite
+.github/workflows/release.yml    Automated GitHub releases
 ```
-SheetLite/
-├── SheetLite.csproj              # net9.0-windows WinForms exe; single-file publish config
-├── Program.cs                    # Entry point and global exception handlers
-├── MainForm.cs                   # Window shell, menus, toolbar, status bar, command routing
-├── MainForm.Documents.cs         # Workbook tabs, split panes, open/save orchestration
-├── MainForm.DockedTools.cs       # Find/Replace, Filter, Sort, SQL console panels
-├── MainForm.HeaderMenus.cs       # Row/column/cell header context menus
-├── MainForm.DragDrop.cs          # File drop zones and import targets
-├── CellModel.cs                  # Cell/Sheet/Workbook models (no UI dependencies)
-├── SheetModelOperations.cs       # Authoritative model mutations + change-set undo recording
-├── WorksheetChangeSet.cs         # Batched versioning, graph synchronization, and change events
-├── GridTypes.cs                  # CellAddress / CellRange / CellEdit / display-value primitives
-├── WorksheetDataSource.cs        # IWorksheetDataSource, memoizing SheetModelDataSource, WorksheetView
-├── DocumentTab.cs                # Custom workbook tab control
-├── ColumnFilterPopup.cs          # Per-column value/condition filter card
-├── CsvCodec.cs                   # Delimited-text parse/serialize with delimiter detection
-├── XlsxCodec.cs                  # Minimal Open XML reader/writer for XLSX
-├── FormulaEngine.cs              # Compatibility API and shared per-sheet graph ownership
-├── FormulaSyntax.cs              # Reusable formula AST, typed values/errors, dependency extraction
-├── FormulaDependencyGraph.cs     # Incremental dependency graph, dirty propagation, typed cache
-├── FormulaReferenceUpdater.cs    # A1 reference rewriting for structural edits
-├── SqlQueryEngine.cs             # Read-only SQL dialect over the active sheet
-├── Theme.cs / NativeTheme.cs     # Dracula palette, renderers, dark title bar integration
-├── UiIcons.cs / HelpContent.cs   # Embedded icons and in-app help text
-├── Assets/                       # App icon, titlebar glyphs, embedded resources
-├── tests/SheetLite.Core.Tests    # Dependency-free test runner for models, primitives, data source
-├── CODE_REVIEW*.md               # Three rounds of full-source code review documents
-└── refactor-options/             # Large-refactor designs, implementation status, and deferred work
-```
-
-### Architecture notes
-
-- `WorkbookModel`/`SheetModel` hold immutable-ish cell data; the engines (`FormulaEngine`, `SqlQueryEngine`) operate directly on models so they stay unit-testable and UI-free.
-- Editing is model-first: every cell or structural change goes through `SheetModel`'s mutation APIs (`SheetModelOperations.cs`). Nested update batches advance the version once, synchronize formulas, and publish one `WorksheetChangeSet`; saving, undo, sorting, filtering, find/replace, and SQL all read from models, never from grid cells.
-- Both grids run in `DataGridView.VirtualMode` through one shared `WorksheetPaneController`: rendering builds columns and assigns `RowCount` (O(columns), no per-cell UI objects), `CellValueNeeded` reads through `SheetModelDataSource`, edits commit via `CellValuePushed`, and styles come from model formatting in `CellFormatting`. Filtering populates each pane's `WorksheetView` map instead of toggling row-visibility flags. Model events selectively invalidate affected visible cells in both panes, with full repaint reserved for structural or safety-fallback changes.
-- Undo/redo records compact cell change-sets (`UndoSteps.cs`) for edits and before/after sheet states for structural commands, falling back to full snapshots only for workbook-shape commands like sheet renames and sort-preview saves.
-- `FormulaEngine` owns one `FormulaDependencyGraph` per `SheetModel`. Parsed ASTs, forward/reverse dependencies, dirty propagation, cycle recovery, and typed cached results are shared across evaluation contexts and panes. Small ranges use exact reverse edges; large ranges remain compact and currently use a linear list scan for invalidation.
-- `WorksheetModel` carries a stable ID through cloning, so undo steps still target the logical sheet after tab reordering or workbook replacement. Structural edits continue to use `FormulaReferenceUpdater` and rebuild the graph once; AST-based rewriting is deferred.
-- SQL, sorting, and filtering consume current cached formula results at their boundaries. XLSX export writes native formulas plus cached typed results, using the Open XML error type for formula errors.
-- All destructive keyboard commands route through a single router (`ProcessCmdKey`) that respects overlay/focus state.
-
-## Documentation
-
-- [`CODE_REVIEW.md`](CODE_REVIEW.md) — Round 1: full review of ~4.3k LOC grouped by severity with concrete fixes.
-- [`CODE_REVIEW_2.md`](CODE_REVIEW_2.md) — Round 2: post-fix verification of Round 1 findings plus new-issue hunt.
-- [`CODE_REVIEW_3.md`](CODE_REVIEW_3.md) — Round 3: verification of Round 2 fixes, regressions, and remaining findings.
-- [`refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md`](refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md) — implemented single-sheet dependency-graph engine and explicitly deferred cross-sheet/indexing work.
-- [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md) — implemented model-backed virtual grid design and remaining sparse-storage work.
-
-## Roadmap
-
-1. Dependency-graph formula engine — the single-sheet engine is implemented (AST parsing, typed values/errors, cached incremental recalculation, mutation batching, undo/structural rebuild, and selective pane invalidation). Cross-sheet addresses/references, AST-based reference rewriting, and an interval index for large ranges remain deferred. See [`refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md`](refactor-options/DEPENDENCY_GRAPH_FORMULA_ENGINE.md).
-2. Virtualized grid for very large CSV/XLSX files — Phases 1–5 are implemented (model-first editing, both panes virtual with view-map filtering, one shared pane controller, change-set undo); sparse cell storage inside `SheetModel` is deferred. See [`refactor-options/VIRTUALIZED_GRID.md`](refactor-options/VIRTUALIZED_GRID.md).
-3. Address residual findings from Round 3 of the code reviews (e.g., shortcuts that still target the left pane with two independent files).
-
-## Privacy and portability
-
-No network requests, no telemetry, no registry keys, no persisted recent-files list. Files are only touched when you explicitly open/save. Native Windows file/color dialogs are retained.
 
 ## License
 
-All rights reserved until a license is chosen.
+No license file is currently included. Unless the repository owner adds one, normal copyright restrictions apply.

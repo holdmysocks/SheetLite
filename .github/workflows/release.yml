@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - SheetLite.csproj
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sheetlite-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Read release version
+        id: version
+        shell: pwsh
+        run: |
+          [xml] $project = Get-Content SheetLite.csproj
+          $version = [string] $project.Project.PropertyGroup.Version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "SheetLite.csproj Version must use the form major.minor.patch. Found: '$version'"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Check whether this version is already released
+        id: existing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          $found = $LASTEXITCODE -eq 0
+          "found=$found".ToLowerInvariant() >> $env:GITHUB_OUTPUT
+          exit 0
+
+      - name: Run tests
+        if: steps.existing.outputs.found != 'true'
+        run: dotnet run --project tests/SheetLite.Core.Tests -c Release
+
+      - name: Publish Windows executable
+        if: steps.existing.outputs.found != 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          dotnet publish SheetLite.csproj -c Release -r win-x64 --self-contained true
+          -p:Version=$env:RELEASE_VERSION -p:InformationalVersion=$env:RELEASE_VERSION
+          -o artifacts/publish
+
+      - name: Package release
+        if: steps.existing.outputs.found != 'true'
+        id: package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $archive = "artifacts/SheetLite-$env:RELEASE_VERSION-win-x64.zip"
+          Compress-Archive -Path artifacts/publish/* -DestinationPath $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $archive -Leaf)" | Set-Content "$archive.sha256"
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "checksum=$archive.sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.found != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        run: >-
+          gh release create $env:RELEASE_TAG $env:ARCHIVE $env:CHECKSUM
+          --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA
+          --title "SheetLite $env:RELEASE_TAG" --generate-notes
+
+      - name: Version already released
+        if: steps.existing.outputs.found == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: Write-Host "$env:RELEASE_TAG already exists; bump Version to publish another release."

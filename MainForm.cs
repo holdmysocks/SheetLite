@@ -76,7 +76,13 @@ internal sealed partial class MainForm : Form
         shell.Dock = DockStyle.Fill; shell.Margin = Padding.Empty; shell.Padding = Padding.Empty; shell.BackColor = Theme.Surface; shell.ColumnCount = 1; shell.RowCount = 2; shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); shell.Controls.Add(chrome, 0, 0); shell.Controls.Add(contentHost, 0, 1); shell.SizeChanged += (_, _) => UpdateShellShape(); Controls.Add(shell);
         windowBorder.Bounds = ClientRectangle; windowBorder.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right; Controls.Add(windowBorder); windowBorder.BringToFront();
         KeyPreview = true; FormClosing += OnClosing;
-        Shown += (_, _) => { NativeTheme.ApplyDarkWindow(this); UpdateWindowShape(); if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath)) OpenFile(initialPath); };
+        Shown += async (_, _) =>
+        {
+            NativeTheme.ApplyDarkWindow(this);
+            UpdateWindowShape();
+            if (!string.IsNullOrWhiteSpace(initialPath) && File.Exists(initialPath)) OpenFile(initialPath);
+            await CheckForUpdatesAsync(showCurrent: false);
+        };
         ShowWelcome();
     }
 
@@ -107,7 +113,7 @@ internal sealed partial class MainForm : Form
         rows.DropDownItems.AddRange([Item("Find…", Keys.Control | Keys.F, Find), Item("Filter…", Keys.Control | Keys.L, Filter), Item("Clear filter", Keys.Control | Keys.Shift | Keys.L, ClearFilter), Item("Sort…", Keys.Control | Keys.Shift | Keys.T, ShowSortPanel), new ToolStripSeparator(), rowCommands, columnCommands, freezeCommands, formatCommands]);
         var view = new ToolStripMenuItem("View");
         view.DropDownItems.AddRange([Item("SQL console", Keys.Control | Keys.Oem3, () => ToggleSqlConsole()), Item("Split view", Keys.Control | Keys.Alt | Keys.S, ToggleSplitView), new ToolStripSeparator(), Item("Open file in left pane…", Keys.None, () => OpenFileInSplitPane(primary: true)), Item("Open file in right pane…", Keys.None, () => OpenFileInSplitPane(primary: false))]);
-        var help = new ToolStripMenuItem("Help"); help.DropDownItems.AddRange([Item("SheetLite Help", Keys.F1, () => ShowHelpPage()), Item("Keyboard shortcuts", Keys.None, () => ShowHelpPage("Keyboard shortcuts")), new ToolStripSeparator(), Item("About SheetLite", Keys.None, About)]);
+        var help = new ToolStripMenuItem("Help"); help.DropDownItems.AddRange([Item("SheetLite Help", Keys.F1, () => ShowHelpPage()), Item("Keyboard shortcuts", Keys.None, () => ShowHelpPage("Keyboard shortcuts")), new ToolStripSeparator(), Item("Check for updates…", Keys.None, () => _ = CheckForUpdatesAsync(showCurrent: true)), Item("About SheetLite", Keys.None, About)]);
         var logo = new ToolStripLabel { Image = LoadBrandImage(), DisplayStyle = ToolStripItemDisplayStyle.Image, AutoSize = false, Size = new Size(42, 32), ImageScaling = ToolStripItemImageScaling.SizeToFit, Margin = Padding.Empty, Padding = new Padding(5, 1, 5, 1), AccessibleName = "SheetLite" };
         menu.Items.Add(logo); menu.Items.AddRange([file, edit, rows, view, help]);
         foreach (ToolStripMenuItem top in menu.Items.OfType<ToolStripMenuItem>()) { top.Margin = Padding.Empty; ConfigureDropDown(top); }

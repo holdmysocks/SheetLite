@@ -8,9 +8,12 @@ x86/
 bld/
 [Ll]og/
 [Ll]ogs/
+*.log
 artifacts/
 publish/
 out/
+.cache/
+temp/
 
 # .NET build artifacts
 project.lock.json
@@ -57,6 +60,7 @@ BenchmarkDotNet.Artifacts/
 # Publish / packaging output for the single-file app
 /dist/
 SheetLite*.zip
+SheetLite*.sha256
 *.appx
 
 # OS metadata
