@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>SheetLite</AssemblyName>
     <RootNamespace>SheetLite</RootNamespace>
-    <Version>0.7.0</Version>
+    <Version>0.7.1</Version>
     <Authors>SheetLite Contributors</Authors>
     <Description>A fast, portable, Dracula-themed CSV and XLSX workbook editor for Windows.</Description>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>

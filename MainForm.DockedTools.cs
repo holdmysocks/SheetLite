@@ -780,8 +780,17 @@ internal sealed partial class MainForm
                 int availableWidth = Math.Max(minimumWidth, activeHeader.ClientSize.Width - 108);
                 toolbar.Width = Math.Min(preferredWidth, Math.Min(activeHeader.ClientSize.Width, availableWidth));
                 int headerHeight = ToolbarRowCount(toolbar.Width) * 34 + 1;
-                SetPaneHeaderHeight(primaryPaneLayout, ReferenceEquals(activeHeader, primaryFileHeader) ? headerHeight : 35);
-                SetPaneHeaderHeight(secondaryPaneLayout, ReferenceEquals(activeHeader, secondaryFileHeader) ? headerHeight : 35);
+                if (splitView.Panel2Collapsed)
+                {
+                    SetPaneHeaderHeight(primaryPaneLayout, headerHeight);
+                    SetPaneHeaderHeight(secondaryPaneLayout, 35);
+                }
+                else
+                {
+                    // Keep both grid origins aligned even though the toolbar lives in only the active pane.
+                    SetPaneHeaderHeight(primaryPaneLayout, headerHeight);
+                    SetPaneHeaderHeight(secondaryPaneLayout, headerHeight);
+                }
                 toolbar.PerformLayout();
             }
             foreach (var pair in new[] { (Header: primaryFileHeader, Tabs: primaryDocumentTabs), (Header: secondaryFileHeader, Tabs: secondaryDocumentTabs) })
