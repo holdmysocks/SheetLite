@@ -53,14 +53,26 @@ internal readonly struct CellEdit
     public string? Value { get; init; }
     public Color? BackColor { get; init; }
     public Color? ForeColor { get; init; }
+    public float? FontSize { get; init; }
     public bool? Bold { get; init; }
+    public bool? Italic { get; init; }
+    public bool? Underline { get; init; }
+    public CellHorizontalAlignment? HorizontalAlignment { get; init; }
+    public CellVerticalAlignment? VerticalAlignment { get; init; }
     public bool ClearFormatting { get; init; }
     public bool ClearBackColor { get; init; }
     public bool ClearForeColor { get; init; }
 
     public static CellEdit SetValue(string value) => new() { Value = value };
     public static CellEdit ClearValue() => new() { Value = "" };
-    public static CellEdit Format(Color? backColor = null, Color? foreColor = null, bool? bold = null) => new() { BackColor = backColor, ForeColor = foreColor, Bold = bold };
+    public static CellEdit Format(Color? backColor = null, Color? foreColor = null, float? fontSize = null,
+        bool? bold = null, bool? italic = null, bool? underline = null,
+        CellHorizontalAlignment? horizontalAlignment = null, CellVerticalAlignment? verticalAlignment = null) => new()
+        {
+            BackColor = backColor, ForeColor = foreColor, FontSize = fontSize,
+            Bold = bold, Italic = italic, Underline = underline,
+            HorizontalAlignment = horizontalAlignment, VerticalAlignment = verticalAlignment
+        };
     public static CellEdit ResetFormatting() => new() { ClearFormatting = true };
     public static CellEdit ResetBackgroundColor() => new() { ClearBackColor = true };
     public static CellEdit ResetTextColor() => new() { ClearForeColor = true };
@@ -69,14 +81,27 @@ internal readonly struct CellEdit
     public void ApplyTo(CellModel cell)
     {
         if (Value is not null) cell.Value = Value;
-        if (ClearFormatting) { cell.BackColor = null; cell.ForeColor = null; cell.Bold = false; return; }
+        if (ClearFormatting)
+        {
+            cell.BackColor = null; cell.ForeColor = null; cell.FontSize = null;
+            cell.Bold = cell.Italic = cell.Underline = false;
+            cell.HorizontalAlignment = null;
+            cell.VerticalAlignment = null;
+            return;
+        }
         if (ClearBackColor) cell.BackColor = null;
         else if (BackColor is not null) cell.BackColor = BackColor;
         if (ClearForeColor) cell.ForeColor = null;
         else if (ForeColor is not null) cell.ForeColor = ForeColor;
+        if (FontSize is not null) cell.FontSize = FontSize.Value;
         if (Bold is not null) cell.Bold = Bold.Value;
+        if (Italic is not null) cell.Italic = Italic.Value;
+        if (Underline is not null) cell.Underline = Underline.Value;
+        if (HorizontalAlignment is not null) cell.HorizontalAlignment = HorizontalAlignment.Value;
+        if (VerticalAlignment is not null) cell.VerticalAlignment = VerticalAlignment.Value;
     }
 }
 
 /// <summary>The fully resolved presentation of one cell: evaluated text plus effective styling.</summary>
-internal readonly record struct CellDisplayValue(string Text, Color BackColor, Color ForeColor, bool Bold);
+internal readonly record struct CellDisplayValue(string Text, Color BackColor, Color ForeColor, float FontSize,
+    bool Bold, bool Italic, bool Underline, CellHorizontalAlignment HorizontalAlignment, CellVerticalAlignment VerticalAlignment);

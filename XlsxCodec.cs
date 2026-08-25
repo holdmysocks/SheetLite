@@ -66,7 +66,12 @@ internal static class XlsxCodec
                 var cell = result.Rows[rowIndex][column];
                 cell.Value = value;
                 int styleIndex = (int?)cellElement.Attribute("s") ?? 0;
-                if (styles.TryGetValue(styleIndex, out var style)) { cell.BackColor = style.BackColor; cell.ForeColor = style.ForeColor; cell.Bold = style.Bold; }
+                if (styles.TryGetValue(styleIndex, out var style))
+                {
+                    cell.BackColor = style.BackColor; cell.ForeColor = style.ForeColor; cell.FontSize = style.FontSize;
+                    cell.Bold = style.Bold; cell.Italic = style.Italic; cell.Underline = style.Underline;
+                    cell.HorizontalAlignment = style.HorizontalAlignment; cell.VerticalAlignment = style.VerticalAlignment;
+                }
             }
         }
         if (result.Rows.Count == 0) result.EnsureSize(100, 26);
@@ -97,31 +102,38 @@ internal static class XlsxCodec
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
 
-    private record Style(Color? BackColor, Color? ForeColor, bool Bold);
+    private record Style(Color? BackColor, Color? ForeColor, float? FontSize, bool Bold, bool Italic, bool Underline,
+        CellHorizontalAlignment? HorizontalAlignment, CellVerticalAlignment? VerticalAlignment);
     private static Dictionary<Style, int> BuildStyleMap(IEnumerable<SheetModel> sheets)
     {
-        var map = new Dictionary<Style, int> { [new(null, null, false)] = 0 };
+        var map = new Dictionary<Style, int>
+        {
+            [new(null, null, null, false, false, false, null, null)] = 0
+        };
         foreach (var cell in sheets.SelectMany(sheet => sheet.Rows).SelectMany(row => row))
         {
-            var style = new Style(cell.BackColor, cell.ForeColor, cell.Bold);
+            var style = StyleFor(cell);
             if (!map.ContainsKey(style)) map[style] = map.Count;
         }
         return map;
     }
 
+    private static Style StyleFor(CellModel cell) => new(cell.BackColor, cell.ForeColor, cell.FontSize,
+        cell.Bold, cell.Italic, cell.Underline, cell.HorizontalAlignment, cell.VerticalAlignment);
+
     private static string SheetXml(SheetModel sheet, Dictionary<Style, int> styles)
     {
         var data = new XElement(Main + "sheetData");
         FormulaEngine.FormulaEvaluationContext? formulaContext = null;
-        int lastRow = sheet.Rows.FindLastIndex(r => r.Any(c => c.Value.Length > 0 || c.BackColor is not null || c.ForeColor is not null));
+        int lastRow = sheet.Rows.FindLastIndex(r => r.Any(c => c.Value.Length > 0 || c.HasFormatting));
         for (int r = 0; r <= lastRow; r++)
         {
             var row = new XElement(Main + "row", new XAttribute("r", r + 1));
             for (int c = 0; c < sheet.Rows[r].Count; c++)
             {
                 var value = sheet.Rows[r][c];
-                if (value.Value.Length == 0 && value.BackColor is null && value.ForeColor is null) continue;
-                var style = new Style(value.BackColor, value.ForeColor, value.Bold);
+                if (value.Value.Length == 0 && !value.HasFormatting) continue;
+                var style = StyleFor(value);
                 var cell = new XElement(Main + "c", new XAttribute("r", CellReference(r, c)), new XAttribute("s", styles[style]));
                 if (value.Value.TrimStart().StartsWith('='))
                 {
@@ -158,14 +170,28 @@ internal static class XlsxCodec
             new XElement(Main + "fill", new XElement(Main + "patternFill", new XAttribute("patternType", "gray125"))));
         foreach (var s in styles)
         {
-            var font = new XElement(Main + "font", new XElement(Main + "sz", new XAttribute("val", 11)), new XElement(Main + "name", new XAttribute("val", "Segoe UI")));
+            var font = new XElement(Main + "font", new XElement(Main + "sz", new XAttribute("val", (s.FontSize ?? CellModel.DefaultFontSize).ToString("0.##", CultureInfo.InvariantCulture))), new XElement(Main + "name", new XAttribute("val", "Segoe UI")));
             if (s.Bold) font.Add(new XElement(Main + "b"));
+            if (s.Italic) font.Add(new XElement(Main + "i"));
+            if (s.Underline) font.Add(new XElement(Main + "u"));
             if (s.ForeColor is Color fc) font.Add(new XElement(Main + "color", new XAttribute("rgb", ToArgb(fc))));
             fonts.Add(font);
             fills.Add(new XElement(Main + "fill", new XElement(Main + "patternFill", new XAttribute("patternType", "solid"), new XElement(Main + "fgColor", new XAttribute("rgb", ToArgb(s.BackColor ?? Color.White))), new XElement(Main + "bgColor", new XAttribute("indexed", 64)))));
         }
         var xfs = new XElement(Main + "cellXfs", new XAttribute("count", styles.Count));
-        for (int i = 0; i < styles.Count; i++) xfs.Add(new XElement(Main + "xf", new XAttribute("numFmtId", 0), new XAttribute("fontId", i), new XAttribute("fillId", styles[i].BackColor is null ? 0 : i + 2), new XAttribute("borderId", 0), new XAttribute("xfId", 0), new XAttribute("applyFont", 1), new XAttribute("applyFill", styles[i].BackColor is null ? 0 : 1)));
+        for (int i = 0; i < styles.Count; i++)
+        {
+            Style style = styles[i];
+            var xf = new XElement(Main + "xf", new XAttribute("numFmtId", 0), new XAttribute("fontId", i), new XAttribute("fillId", style.BackColor is null ? 0 : i + 2), new XAttribute("borderId", 0), new XAttribute("xfId", 0), new XAttribute("applyFont", 1), new XAttribute("applyFill", style.BackColor is null ? 0 : 1));
+            if (style.HorizontalAlignment is not null || style.VerticalAlignment is not null)
+            {
+                var alignment = new XElement(Main + "alignment");
+                if (style.HorizontalAlignment is { } horizontal) alignment.SetAttributeValue("horizontal", horizontal.ToString().ToLowerInvariant());
+                if (style.VerticalAlignment is { } vertical) alignment.SetAttributeValue("vertical", vertical == CellVerticalAlignment.Middle ? "center" : vertical.ToString().ToLowerInvariant());
+                xf.Add(new XAttribute("applyAlignment", 1), alignment);
+            }
+            xfs.Add(xf);
+        }
         var root = new XElement(Main + "styleSheet", fonts, fills, new XElement(Main + "borders", new XAttribute("count", 1), new XElement(Main + "border", new XElement(Main + "left"), new XElement(Main + "right"), new XElement(Main + "top"), new XElement(Main + "bottom"), new XElement(Main + "diagonal"))), new XElement(Main + "cellStyleXfs", new XAttribute("count", 1), new XElement(Main + "xf", new XAttribute("numFmtId", 0), new XAttribute("fontId", 0), new XAttribute("fillId", 0), new XAttribute("borderId", 0))), xfs);
         return new XDocument(new XDeclaration("1.0", "utf-8", "yes"), root).ToString(SaveOptions.DisableFormatting);
     }
@@ -183,8 +209,25 @@ internal static class XlsxCodec
             int fontId = (int?)xf.Attribute("fontId") ?? 0, fillId = (int?)xf.Attribute("fillId") ?? 0;
             Color? fg = fontId < fonts.Count ? ReadColor(fonts[fontId].Element(Main + "color")) : null;
             Color? bg = fillId < fills.Count ? ReadColor(fills[fillId].Descendants(Main + "fgColor").FirstOrDefault()) : null;
-            bool bold = fontId < fonts.Count && fonts[fontId].Element(Main + "b") is not null;
-            result[i++] = new(bg, fg, bold);
+            XElement? font = fontId < fonts.Count ? fonts[fontId] : null;
+            float? size = float.TryParse((string?)font?.Element(Main + "sz")?.Attribute("val"), NumberStyles.Float, CultureInfo.InvariantCulture, out float parsedSize) ? parsedSize : null;
+            bool bold = font?.Element(Main + "b") is not null, italic = font?.Element(Main + "i") is not null, underline = font?.Element(Main + "u") is not null;
+            XElement? alignment = xf.Element(Main + "alignment");
+            CellHorizontalAlignment? horizontal = ((string?)alignment?.Attribute("horizontal"))?.ToLowerInvariant() switch
+            {
+                "center" => CellHorizontalAlignment.Center,
+                "right" => CellHorizontalAlignment.Right,
+                "left" => CellHorizontalAlignment.Left,
+                _ => null
+            };
+            CellVerticalAlignment? vertical = ((string?)alignment?.Attribute("vertical"))?.ToLowerInvariant() switch
+            {
+                "top" => CellVerticalAlignment.Top,
+                "bottom" => CellVerticalAlignment.Bottom,
+                "center" => CellVerticalAlignment.Middle,
+                _ => null
+            };
+            result[i++] = new(bg, fg, size, bold, italic, underline, horizontal, vertical);
         }
         return result;
     }

@@ -11,6 +11,9 @@ internal sealed partial class MainForm : Form
     private static string AppVersion => typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     private readonly DataGridView grid = new SmoothDataGridView();
     private readonly ToolStrip toolbar = new();
+    private ToolStripButton boldButton = null!, italicButton = null!, underlineButton = null!;
+    private ToolStripButton alignLeftButton = null!, alignCenterButton = null!, alignRightButton = null!;
+    private ToolStripButton alignTopButton = null!, alignMiddleButton = null!, alignBottomButton = null!;
     private readonly StatusStrip status = new DividerStatusStrip();
     private readonly Panel contentHost = new();
     private readonly TableLayoutPanel shell = new();
@@ -109,7 +112,7 @@ internal sealed partial class MainForm : Form
         var rowCommands = new ToolStripMenuItem("Rows"); rowCommands.DropDownItems.AddRange([Item("Insert above", Keys.Control | Keys.Shift | Keys.Up, () => RunPrimaryCommand("Insert row above", InsertRow)), Item("Insert below", Keys.Control | Keys.Shift | Keys.Down, () => RunPrimaryCommand("Insert row below", InsertRowBelow)), Item("Delete selected rows", Keys.Control | Keys.Subtract, () => RunPrimaryCommand("Delete rows", DeleteRows)), Item("Move up", Keys.Alt | Keys.Up, () => RunPrimaryCommand("Move row up", () => MoveRow(-1))), Item("Move down", Keys.Alt | Keys.Down, () => RunPrimaryCommand("Move row down", () => MoveRow(1)))]);
         var columnCommands = new ToolStripMenuItem("Columns"); columnCommands.DropDownItems.AddRange([Item("Insert left", Keys.Control | Keys.Shift | Keys.Left, () => RunPrimaryCommand("Insert column left", InsertColumn)), Item("Insert right", Keys.Control | Keys.Shift | Keys.Right, () => RunPrimaryCommand("Insert column right", InsertColumnRight)), Item("Delete selected columns", Keys.Control | Keys.Shift | Keys.Subtract, () => RunPrimaryCommand("Delete columns", DeleteColumns)), Item("Move left", Keys.Alt | Keys.Left, () => RunPrimaryCommand("Move column left", () => MoveColumn(-1))), Item("Move right", Keys.Alt | Keys.Right, () => RunPrimaryCommand("Move column right", () => MoveColumn(1))), Item("Auto-size selected", Keys.Control | Keys.Alt | Keys.A, () => RunPrimaryCommand("Auto-size columns", AutoSizeColumns))]);
         var freezeCommands = new ToolStripMenuItem("Freeze panes"); freezeCommands.DropDownItems.AddRange([Item("Freeze at current cell", Keys.Control | Keys.Shift | Keys.F, () => RunPrimaryCommand("Freeze panes", Freeze)), Item("Unfreeze panes", Keys.None, () => RunPrimaryCommand("Unfreeze panes", Unfreeze))]);
-        var formatCommands = new ToolStripMenuItem("Cell appearance"); formatCommands.DropDownItems.AddRange([Item("Background color…", Keys.None, () => RunPrimaryCommand("Cell background color", SetBackground)), Item("Text color…", Keys.None, () => RunPrimaryCommand("Cell text color", SetForeground)), Item("Reset colors to default", Keys.None, () => RunPrimaryCommand("Reset cell colors", ResetColors)), new ToolStripSeparator(), Item("Toggle bold", Keys.Control | Keys.B, () => RunPrimaryCommand("Toggle bold", ToggleBold)), Item("Clear formatting", Keys.Control | Keys.Shift | Keys.Space, () => RunPrimaryCommand("Clear formatting", ClearFormatting))]);
+        var formatCommands = new ToolStripMenuItem("Cell appearance"); formatCommands.DropDownItems.AddRange([Item("Background color…", Keys.None, SetBackground), Item("Text color…", Keys.None, SetForeground), Item("Reset colors to default", Keys.None, ResetColors), new ToolStripSeparator(), Item("Increase text size", Keys.None, () => ChangeFontSize(1)), Item("Decrease text size", Keys.None, () => ChangeFontSize(-1)), Item("Toggle bold", Keys.Control | Keys.B, ToggleBold), Item("Toggle italic", Keys.Control | Keys.I, ToggleItalic), Item("Toggle underline", Keys.Control | Keys.U, ToggleUnderline), new ToolStripSeparator(), Item("Align left", Keys.None, () => SetHorizontalAlignment(CellHorizontalAlignment.Left)), Item("Align center", Keys.None, () => SetHorizontalAlignment(CellHorizontalAlignment.Center)), Item("Align right", Keys.None, () => SetHorizontalAlignment(CellHorizontalAlignment.Right)), Item("Align top", Keys.None, () => SetVerticalAlignment(CellVerticalAlignment.Top)), Item("Align middle", Keys.None, () => SetVerticalAlignment(CellVerticalAlignment.Middle)), Item("Align bottom", Keys.None, () => SetVerticalAlignment(CellVerticalAlignment.Bottom)), new ToolStripSeparator(), Item("Clear formatting", Keys.Control | Keys.Shift | Keys.Space, ClearFormatting)]);
         rows.DropDownItems.AddRange([Item("Find…", Keys.Control | Keys.F, Find), Item("Filter…", Keys.Control | Keys.L, Filter), Item("Clear filter", Keys.Control | Keys.Shift | Keys.L, ClearFilter), Item("Sort…", Keys.Control | Keys.Shift | Keys.T, ShowSortPanel), new ToolStripSeparator(), rowCommands, columnCommands, freezeCommands, formatCommands]);
         var view = new ToolStripMenuItem("View");
         view.DropDownItems.AddRange([Item("SQL console", Keys.Control | Keys.Oem3, () => ToggleSqlConsole()), Item("Split view", Keys.Control | Keys.Alt | Keys.S, ToggleSplitView), new ToolStripSeparator(), Item("Open file in left pane…", Keys.None, () => OpenFileInSplitPane(primary: true)), Item("Open file in right pane…", Keys.None, () => OpenFileInSplitPane(primary: false))]);
@@ -320,11 +323,12 @@ internal sealed partial class MainForm : Form
 
     private ToolStrip BuildToolbar()
     {
-        toolbar.Dock = DockStyle.Right; toolbar.Width = 276; toolbar.Height = 34; toolbar.AutoSize = false; toolbar.CanOverflow = true; toolbar.LayoutStyle = ToolStripLayoutStyle.HorizontalStackWithOverflow; toolbar.GripStyle = ToolStripGripStyle.Hidden; toolbar.BackColor = Theme.Surface; toolbar.ForeColor = Theme.Foreground; toolbar.Padding = new Padding(4, 0, 4, 0); toolbar.Margin = Padding.Empty; toolbar.Renderer = new DraculaRenderer();
-        void Add(UiIcon icon, string tip, Action action)
+        toolbar.Dock = DockStyle.Right; toolbar.Width = 276; toolbar.Height = 34; toolbar.AutoSize = false; toolbar.CanOverflow = false; toolbar.LayoutStyle = ToolStripLayoutStyle.Flow; toolbar.GripStyle = ToolStripGripStyle.Hidden; toolbar.BackColor = Theme.Surface; toolbar.ForeColor = Theme.Foreground; toolbar.Padding = new Padding(4, 0, 4, 0); toolbar.Margin = Padding.Empty; toolbar.Renderer = new DraculaRenderer(); toolbar.AccessibleName = "Worksheet toolbar";
+        if (toolbar.LayoutSettings is FlowLayoutSettings flow) { flow.FlowDirection = FlowDirection.LeftToRight; flow.WrapContents = true; }
+        ToolStripButton Add(UiIcon icon, string tip, Action action)
         {
-            var b = new ToolStripButton { Alignment = ToolStripItemAlignment.Left, Image = UiIcons.Draw(icon, Theme.Foreground), ToolTipText = tip, AccessibleName = tip, DisplayStyle = ToolStripItemDisplayStyle.Image, AutoSize = false, Size = new Size(31, 30), ImageScaling = ToolStripItemImageScaling.None, Margin = Padding.Empty, Padding = Padding.Empty };
-            b.Click += (_, _) => action(); toolbar.Items.Add(b);
+            var b = new ToolStripButton { Alignment = ToolStripItemAlignment.Left, Image = UiIcons.Draw(icon, Theme.Foreground), ToolTipText = tip, AccessibleName = tip, DisplayStyle = ToolStripItemDisplayStyle.Image, AutoSize = false, Size = new Size(28, 30), ImageScaling = ToolStripItemImageScaling.None, Margin = Padding.Empty, Padding = Padding.Empty, Overflow = ToolStripItemOverflow.Never };
+            b.Click += (_, _) => action(); toolbar.Items.Add(b); return b;
         }
         void Divider() => toolbar.Items.Add(new ToolStripSeparator { AutoSize = false, Size = new Size(8, 24), Margin = new Padding(1, 5, 1, 5) });
         Add(UiIcon.Search, "Find and replace (Ctrl+F / Ctrl+H)", () => RunPrimaryCommand("Find and replace", Find));
@@ -335,8 +339,22 @@ internal sealed partial class MainForm : Form
         Add(UiIcon.Split, "Split view (Ctrl+Alt+S)", ToggleSplitView);
         Divider();
         Add(UiIcon.Freeze, "Freeze panes at the current selection (Ctrl+Shift+F)", () => RunPrimaryCommand("Freeze panes", Freeze));
-        Add(UiIcon.Fill, "Cell background color", () => RunPrimaryCommand("Cell background color", SetBackground));
-        Add(UiIcon.TextColor, "Cell text color", () => RunPrimaryCommand("Cell text color", SetForeground));
+        Add(UiIcon.Fill, "Cell background color", SetBackground);
+        Add(UiIcon.TextColor, "Cell text color", SetForeground);
+        Divider();
+        Add(UiIcon.FontSizeDown, "Decrease text size", () => ChangeFontSize(-1));
+        Add(UiIcon.FontSizeUp, "Increase text size", () => ChangeFontSize(1));
+        boldButton = Add(UiIcon.Bold, "Bold (Ctrl+B)", ToggleBold);
+        italicButton = Add(UiIcon.Italic, "Italic (Ctrl+I)", ToggleItalic);
+        underlineButton = Add(UiIcon.Underline, "Underline (Ctrl+U)", ToggleUnderline);
+        Divider();
+        alignLeftButton = Add(UiIcon.AlignLeft, "Align text left", () => SetHorizontalAlignment(CellHorizontalAlignment.Left));
+        alignCenterButton = Add(UiIcon.AlignCenter, "Align text center", () => SetHorizontalAlignment(CellHorizontalAlignment.Center));
+        alignRightButton = Add(UiIcon.AlignRight, "Align text right", () => SetHorizontalAlignment(CellHorizontalAlignment.Right));
+        Divider();
+        alignTopButton = Add(UiIcon.AlignTop, "Align text top", () => SetVerticalAlignment(CellVerticalAlignment.Top));
+        alignMiddleButton = Add(UiIcon.AlignMiddle, "Align text middle", () => SetVerticalAlignment(CellVerticalAlignment.Middle));
+        alignBottomButton = Add(UiIcon.AlignBottom, "Align text bottom", () => SetVerticalAlignment(CellVerticalAlignment.Bottom));
         return toolbar;
     }
 
@@ -433,7 +451,7 @@ internal sealed partial class MainForm : Form
         grid.RowTemplate.Height = 23; grid.ColumnHeadersHeight = 25; grid.RowHeadersWidth = 58; grid.AllowUserToAddRows = false; grid.AllowUserToDeleteRows = false;
         grid.ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText; grid.SelectionMode = DataGridViewSelectionMode.CellSelect; grid.MultiSelect = true;
         grid.CellValueChanged += (_, e) => { if (!loading && !cellEditing && e.RowIndex >= 0) SetDirtyCell(e.RowIndex, e.ColumnIndex); };
-        grid.CurrentCellChanged += (_, _) => { if (!cellEditing) HideEditOutline(); UpdateStatus(); grid.Invalidate(); }; grid.SelectionChanged += (_, _) => { NormalizeDragSelection(); UpdateStatus(); grid.Invalidate(); };
+        grid.CurrentCellChanged += (_, _) => { if (!cellEditing) HideEditOutline(); UpdateStatus(); UpdateToolbarFormattingState(); grid.Invalidate(); }; grid.SelectionChanged += (_, _) => { NormalizeDragSelection(); UpdateStatus(); UpdateToolbarFormattingState(); grid.Invalidate(); };
         grid.Enter += (_, _) => SetActivePane(false); grid.MouseDown += (_, _) => SetActivePane(false);
         grid.CellPainting += PaintHeader;
         grid.CellPainting += PaintSelection;
@@ -478,6 +496,8 @@ internal sealed partial class MainForm : Form
         AddContextItem(cellMenu, "Reset colors to default", ResetColors);
         cellMenu.Items.Add(new ToolStripSeparator());
         AddContextItem(cellMenu, "Toggle bold", ToggleBold, "Ctrl+B");
+        AddContextItem(cellMenu, "Toggle italic", ToggleItalic, "Ctrl+I");
+        AddContextItem(cellMenu, "Toggle underline", ToggleUnderline, "Ctrl+U");
     }
 
     private static void ConfigureContextMenu(ContextMenuStrip menu)
@@ -1034,8 +1054,7 @@ internal sealed partial class MainForm : Form
     private void SetForeground() => PickColor(false);
     private void PickColor(bool background)
     {
-        if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null) return;
-        CellModel current = model.GetCell(ModelRow(grid.CurrentCell.RowIndex), grid.CurrentCell.ColumnIndex);
+        if (CurrentFormattedCell() is not CellModel current) return;
         Color effectiveBackground = current.BackColor ?? Theme.CellBackground;
         Color initial = background ? effectiveBackground : current.ForeColor ?? Theme.AdaptiveCellText(effectiveBackground);
         using var dialog = new CellColorDialog(background, initial);
@@ -1047,17 +1066,77 @@ internal sealed partial class MainForm : Form
         ApplyColorEdit(edit);
     }
     private void ResetColors() => ApplyColorEdit(CellEdit.ResetColors());
-    private void ApplyColorEdit(in CellEdit edit)
+    private void ApplyColorEdit(CellEdit edit) => ApplyFormatting(_ => edit);
+    private void ChangeFontSize(float delta) => ApplyFormatting(cell => CellEdit.Format(fontSize: Math.Clamp((cell.FontSize ?? CellModel.DefaultFontSize) + delta, 6F, 72F)));
+    private void ToggleBold() { if (CurrentFormattedCell() is not CellModel cell) return; ApplyFormatting(_ => CellEdit.Format(bold: !cell.Bold)); }
+    private void ToggleItalic() { if (CurrentFormattedCell() is not CellModel cell) return; ApplyFormatting(_ => CellEdit.Format(italic: !cell.Italic)); }
+    private void ToggleUnderline() { if (CurrentFormattedCell() is not CellModel cell) return; ApplyFormatting(_ => CellEdit.Format(underline: !cell.Underline)); }
+    private void SetHorizontalAlignment(CellHorizontalAlignment alignment) => ApplyFormatting(_ => CellEdit.Format(horizontalAlignment: alignment));
+    private void SetVerticalAlignment(CellVerticalAlignment alignment) => ApplyFormatting(_ => CellEdit.Format(verticalAlignment: alignment));
+    private void ClearFormatting() => ApplyFormatting(_ => CellEdit.ResetFormatting());
+
+    private CellModel? CurrentFormattedCell()
     {
-        if (grid.SelectedCells.Count == 0) return;
-        PushUndo();
-        int version = model.Version;
-        using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells)
-            model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), edit);
-        if (model.Version != version) SetDirty();
+        bool secondary = secondaryPaneActive && !splitView.Panel2Collapsed;
+        DataGridView activeGrid = secondary ? secondaryGrid : grid;
+        SheetModel? activeModel = secondary ? secondaryModel : model;
+        WorksheetPaneController pane = secondary ? secondaryPane : primaryPane;
+        if (activeModel is null || activeGrid.CurrentCell is not { } current || current.RowIndex >= pane.View.DisplayRowCount) return null;
+        return activeModel.GetCell(pane.ModelRow(current.RowIndex), current.ColumnIndex);
     }
-    private void ToggleBold() { if (grid.SelectedCells.Count == 0 || grid.CurrentCell is null) return; PushUndo(); bool makeBold = !model.GetCell(ModelRow(grid.CurrentCell.RowIndex), grid.CurrentCell.ColumnIndex).Bold; using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), CellEdit.Format(bold: makeBold)); SetDirty(); }
-    private void ClearFormatting() { PushUndo(); using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) { model.SetCell(new CellAddress(ModelRow(cell.RowIndex), cell.ColumnIndex), CellEdit.ResetFormatting()); } SetDirty(); }
+
+    private void ApplyFormatting(Func<CellModel, CellEdit> editForCell)
+    {
+        bool secondary = secondaryPaneActive && !splitView.Panel2Collapsed;
+        DataGridView activeGrid = secondary ? secondaryGrid : grid;
+        SheetModel? activeModel = secondary ? secondaryModel : model;
+        WorksheetPaneController pane = secondary ? secondaryPane : primaryPane;
+        List<DataGridViewCell> selected = activeGrid.SelectedCells.Cast<DataGridViewCell>().ToList();
+        if (activeModel is null || selected.Count == 0) return;
+        List<int> affectedModelRows = selected.Select(cell => pane.ModelRow(cell.RowIndex)).Distinct().ToList();
+        if (secondary) PushSecondaryEditUndo(); else PushUndo();
+        int version = activeModel.Version;
+        bool rowHeightMayChange = false;
+        using (activeModel.BeginUpdate())
+            foreach (DataGridViewCell selectedCell in selected)
+            {
+                int row = pane.ModelRow(selectedCell.RowIndex);
+                CellEdit edit = editForCell(activeModel.GetCell(row, selectedCell.ColumnIndex));
+                rowHeightMayChange |= edit.FontSize is not null || edit.ClearFormatting;
+                activeModel.SetCell(new CellAddress(row, selectedCell.ColumnIndex), edit);
+            }
+        if (rowHeightMayChange)
+        {
+            pane.RefreshRowHeights(selected.Select(cell => cell.RowIndex));
+            if (secondarySharesPrimary && !splitView.Panel2Collapsed)
+            {
+                WorksheetPaneController otherPane = secondary ? primaryPane : secondaryPane;
+                otherPane.RefreshRowHeights(affectedModelRows.Select(otherPane.DisplayRow));
+            }
+        }
+        if (activeModel.Version != version)
+        {
+            if (secondary) MarkSecondaryEdited(); else SetDirty();
+        }
+        UpdateToolbarFormattingState();
+    }
+
+    private void UpdateToolbarFormattingState()
+    {
+        if (boldButton is null) return;
+        CellModel? cell = CurrentFormattedCell();
+        bool available = cell is not null;
+        foreach (ToolStripButton button in new[] { boldButton, italicButton, underlineButton, alignLeftButton, alignCenterButton, alignRightButton, alignTopButton, alignMiddleButton, alignBottomButton }) button.Enabled = available;
+        boldButton.Checked = cell?.Bold == true; italicButton.Checked = cell?.Italic == true; underlineButton.Checked = cell?.Underline == true;
+        CellHorizontalAlignment horizontal = cell?.HorizontalAlignment ?? CellHorizontalAlignment.Left;
+        CellVerticalAlignment vertical = cell?.VerticalAlignment ?? CellVerticalAlignment.Middle;
+        alignLeftButton.Checked = available && horizontal == CellHorizontalAlignment.Left;
+        alignCenterButton.Checked = available && horizontal == CellHorizontalAlignment.Center;
+        alignRightButton.Checked = available && horizontal == CellHorizontalAlignment.Right;
+        alignTopButton.Checked = available && vertical == CellVerticalAlignment.Top;
+        alignMiddleButton.Checked = available && vertical == CellVerticalAlignment.Middle;
+        alignBottomButton.Checked = available && vertical == CellVerticalAlignment.Bottom;
+    }
     private void AutoSizeColumns() { foreach (int c in grid.SelectedCells.Cast<DataGridViewCell>().Select(x => x.ColumnIndex).Distinct()) grid.Columns[c].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells; BeginInvoke(() => { foreach (DataGridViewColumn c in grid.Columns) if (c.AutoSizeMode != DataGridViewAutoSizeColumnMode.None) { int w = Math.Min(c.Width, 400); c.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; c.Width = w; } }); }
 
     private void EnsureGrid(int rows, int columns) { if (rows <= grid.RowCount && columns <= grid.ColumnCount) return; FlushPendingEdits(grid); model.EnsureSize(Math.Max(rows, grid.RowCount), Math.Max(columns, grid.ColumnCount)); Render(); }
@@ -1166,8 +1245,10 @@ internal sealed partial class MainForm : Form
             Keys.Control | Keys.Oem3 when !gridCommandsBlocked => () => ToggleSqlConsole(),
             Keys.Control | Keys.Alt | Keys.S when !gridCommandsBlocked => ToggleSplitView,
             Keys.Control | Keys.Shift | Keys.F when !textFocused && !gridCommandsBlocked => () => RunPrimaryCommand("Freeze panes", Freeze),
-            Keys.Control | Keys.B when !textFocused && !gridCommandsBlocked => () => RunPrimaryCommand("Toggle bold", ToggleBold),
-            Keys.Control | Keys.Shift | Keys.Space when !textFocused && !gridCommandsBlocked => () => RunPrimaryCommand("Clear formatting", ClearFormatting),
+            Keys.Control | Keys.B when !textFocused && !gridCommandsBlocked => ToggleBold,
+            Keys.Control | Keys.I when !textFocused && !gridCommandsBlocked => ToggleItalic,
+            Keys.Control | Keys.U when !textFocused && !gridCommandsBlocked => ToggleUnderline,
+            Keys.Control | Keys.Shift | Keys.Space when !textFocused && !gridCommandsBlocked => ClearFormatting,
             Keys.Control | Keys.Alt | Keys.A when !textFocused && !gridCommandsBlocked => () => RunPrimaryCommand("Auto-size columns", AutoSizeColumns),
             Keys.Escape when helpPage.Visible => CloseHelpPage,
             Keys.Escape when infoPanel.Visible => () => { infoPanel.Visible = false; RefreshCommandHost(); },

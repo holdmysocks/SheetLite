@@ -1,12 +1,29 @@
 namespace SheetLite;
 
+internal enum CellHorizontalAlignment { Left, Center, Right }
+internal enum CellVerticalAlignment { Top, Middle, Bottom }
+
 internal sealed class CellModel
 {
+    public const float DefaultFontSize = 9F;
     public string Value { get; set; } = "";
     public Color? BackColor { get; set; }
     public Color? ForeColor { get; set; }
+    public float? FontSize { get; set; }
     public bool Bold { get; set; }
-    public CellModel Clone() => new() { Value = Value, BackColor = BackColor, ForeColor = ForeColor, Bold = Bold };
+    public bool Italic { get; set; }
+    public bool Underline { get; set; }
+    public CellHorizontalAlignment? HorizontalAlignment { get; set; }
+    public CellVerticalAlignment? VerticalAlignment { get; set; }
+    public bool HasFormatting => BackColor is not null || ForeColor is not null || FontSize is not null || Bold || Italic || Underline ||
+        HorizontalAlignment is not null || VerticalAlignment is not null;
+
+    public CellModel Clone() => new()
+    {
+        Value = Value, BackColor = BackColor, ForeColor = ForeColor, FontSize = FontSize,
+        Bold = Bold, Italic = Italic, Underline = Underline,
+        HorizontalAlignment = HorizontalAlignment, VerticalAlignment = VerticalAlignment
+    };
 }
 
 internal sealed partial class SheetModel

@@ -26,7 +26,7 @@ internal sealed partial class MainForm
     private readonly Button filterEdit = ToolButton("✎ Conditions"), filterApply = ToolButton("Apply filter"), filterClear = ToolButton("Clear"), filterClose = ToolButton("×");
     private readonly Button sortApplyButton = ToolButton("Sort"), sortSaveButton = ToolButton("Save sort"), sortRevertButton = ToolButton("Revert");
     private readonly Label filterWhereLabel = ToolLabel("WHERE"), filterAdditionalLabel = ToolLabel("Additional condition");
-    private bool filterBuilderExpanded, secondFilterVisible, secondSortVisible, helpReturnToWelcome, secondaryPaneActive;
+    private bool filterBuilderExpanded, secondFilterVisible, secondSortVisible, helpReturnToWelcome, secondaryPaneActive, updatingToolbarLayout;
     private bool secondaryDirty, secondarySharesPrimary, secondaryLoading;
     private bool secondaryFillDragging;
     private CellRange secondaryFillSource, secondaryFillPreview;
@@ -385,7 +385,7 @@ internal sealed partial class MainForm
         secondaryGrid.CellPainting += PaintPaneDimmer;
         secondaryGrid.Enter += (_, _) => SetActivePane(true); secondaryGrid.MouseDown += (_, _) => SetActivePane(true);
         secondaryGrid.MouseDown += BeginSecondaryFillDrag; secondaryGrid.MouseMove += ContinueSecondaryFillDrag; secondaryGrid.MouseUp += EndSecondaryFillDrag; secondaryGrid.Paint += PaintSecondaryFillPreview;
-        secondaryGrid.SelectionChanged += (_, _) => { if (secondaryPaneActive) UpdateStatus(); }; secondaryGrid.CurrentCellChanged += (_, _) => { if (secondaryPaneActive) UpdateStatus(); };
+        secondaryGrid.SelectionChanged += (_, _) => { if (secondaryPaneActive) { UpdateStatus(); UpdateToolbarFormattingState(); } }; secondaryGrid.CurrentCellChanged += (_, _) => { if (secondaryPaneActive) { UpdateStatus(); UpdateToolbarFormattingState(); } };
         secondaryGrid.CellParsing += (_, e) => { if (e.Value is not null) { e.Value = e.Value.ToString(); e.ParsingApplied = true; } };
         secondaryGrid.EditingControlShowing += (_, e) => { if (e.Control is TextBox box) { box.BorderStyle = BorderStyle.None; if (secondaryGrid.CurrentCell is { } cell) { CellDisplayValue display = secondaryPane.Source.GetDisplayValue(new(SecondaryModelRow(cell.RowIndex), cell.ColumnIndex)); box.BackColor = display.BackColor; box.ForeColor = display.ForeColor; } } };
     }
@@ -763,19 +763,53 @@ internal sealed partial class MainForm
 
     private void UpdateSplitChrome()
     {
-        primaryPaneLayout.RowStyles[0].Height = 35; secondaryPaneLayout.RowStyles[0].Height = 35; primaryFileHeader.Visible = true; secondaryFileHeader.Visible = !splitView.Panel2Collapsed; if (splitView.Panel2Collapsed) secondaryPaneActive = false; SetActivePane(secondaryPaneActive); UpdateFileTabChrome();
+        primaryFileHeader.Visible = true; secondaryFileHeader.Visible = !splitView.Panel2Collapsed; if (splitView.Panel2Collapsed) secondaryPaneActive = false; SetActivePane(secondaryPaneActive); UpdateFileTabChrome();
     }
 
     private void UpdateFileTabChrome()
     {
-        primaryDocumentTab.IsDirty = dirty; secondaryDocumentTab.IsDirty = secondarySharesPrimary ? dirty : secondaryDirty;
-        if (toolbar.Parent is Panel activeHeader)
-            toolbar.Width = Math.Min(276, Math.Max(164, activeHeader.ClientSize.Width - 108));
-        foreach (var pair in new[] { (Header: primaryFileHeader, Tabs: primaryDocumentTabs), (Header: secondaryFileHeader, Tabs: secondaryDocumentTabs) })
+        if (updatingToolbarLayout) return;
+        updatingToolbarLayout = true;
+        try
         {
-            int toolbarWidth = toolbar.Parent == pair.Header ? toolbar.Width : 0; int available = Math.Max(88, pair.Header.ClientSize.Width - toolbarWidth);
-            pair.Tabs.Width = available; foreach (DocumentTab tab in pair.Tabs.Controls.OfType<DocumentTab>()) tab.Height = pair.Header.ClientSize.Height;
+            primaryDocumentTab.IsDirty = dirty; secondaryDocumentTab.IsDirty = secondarySharesPrimary ? dirty : secondaryDirty;
+            if (toolbar.Parent is Panel activeHeader)
+            {
+                int preferredWidth = toolbar.Padding.Horizontal + toolbar.Items.Cast<ToolStripItem>().Sum(ToolbarItemWidth) + 2;
+                int minimumWidth = splitView.Panel2Collapsed ? 164 : Math.Min(310, activeHeader.ClientSize.Width);
+                int availableWidth = Math.Max(minimumWidth, activeHeader.ClientSize.Width - 108);
+                toolbar.Width = Math.Min(preferredWidth, Math.Min(activeHeader.ClientSize.Width, availableWidth));
+                int headerHeight = ToolbarRowCount(toolbar.Width) * 34 + 1;
+                SetPaneHeaderHeight(primaryPaneLayout, ReferenceEquals(activeHeader, primaryFileHeader) ? headerHeight : 35);
+                SetPaneHeaderHeight(secondaryPaneLayout, ReferenceEquals(activeHeader, secondaryFileHeader) ? headerHeight : 35);
+                toolbar.PerformLayout();
+            }
+            foreach (var pair in new[] { (Header: primaryFileHeader, Tabs: primaryDocumentTabs), (Header: secondaryFileHeader, Tabs: secondaryDocumentTabs) })
+            {
+                int toolbarWidth = toolbar.Parent == pair.Header ? toolbar.Width : 0; int available = Math.Max(88, pair.Header.ClientSize.Width - toolbarWidth);
+                pair.Tabs.Width = available; foreach (DocumentTab tab in pair.Tabs.Controls.OfType<DocumentTab>()) tab.Height = Math.Min(34, pair.Header.ClientSize.Height);
+            }
         }
+        finally { updatingToolbarLayout = false; }
+    }
+
+    private int ToolbarRowCount(int width)
+    {
+        int available = Math.Max(1, width - toolbar.Padding.Horizontal - 2), used = 0, rows = 1;
+        foreach (ToolStripItem item in toolbar.Items)
+        {
+            int itemWidth = ToolbarItemWidth(item);
+            if (used > 0 && used + itemWidth > available) { rows++; used = 0; }
+            used += itemWidth;
+        }
+        return rows;
+    }
+
+    private static int ToolbarItemWidth(ToolStripItem item) => item is ToolStripSeparator ? 10 : 28;
+
+    private static void SetPaneHeaderHeight(TableLayoutPanel layout, int height)
+    {
+        if (layout.RowStyles.Count > 0 && Math.Abs(layout.RowStyles[0].Height - height) > 0.1F) layout.RowStyles[0].Height = height;
     }
 
     private void SetActivePane(bool secondary)
@@ -785,7 +819,7 @@ internal sealed partial class MainForm
         var targetHeader = secondaryPaneActive ? secondaryFileHeader : primaryFileHeader;
         if (toolbar.Parent != targetHeader) { toolbar.Parent?.Controls.Remove(toolbar); targetHeader.Controls.Add(toolbar); toolbar.Dock = DockStyle.Right; toolbar.BringToFront(); }
         grid.Invalidate(); secondaryGrid.Invalidate(); primaryFileHeader.Invalidate(true); secondaryFileHeader.Invalidate(true);
-        UpdateFileTabChrome(); UpdateStatus();
+        UpdateFileTabChrome(); UpdateStatus(); UpdateToolbarFormattingState();
     }
 
     private void ClosePrimaryDocument()

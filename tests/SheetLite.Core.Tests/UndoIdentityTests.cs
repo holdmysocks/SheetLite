@@ -163,6 +163,37 @@ internal sealed class UndoIdentityTests
         Assert.Equal("x", sheet.GetRawValue(0, editCount - 1));
     }
 
+    [Test] public void Formatting_batch_undo_and_redo_restore_all_style_fields()
+    {
+        WorkbookModel workbook = WorkbookModel.FromSheet(NewSheet());
+        WorksheetModel worksheet = workbook.ActiveSheet;
+        SheetModel sheet = worksheet.Sheet;
+        sheet.TakeUndoSegment(worksheet.Id);
+        var edit = CellEdit.Format(fontSize: 17F, bold: true, italic: true, underline: true,
+            horizontalAlignment: CellHorizontalAlignment.Center, verticalAlignment: CellVerticalAlignment.Top);
+        using (sheet.BeginUpdate())
+        {
+            sheet.SetCell(new CellAddress(0, 0), edit);
+            sheet.SetCell(new CellAddress(1, 2), edit);
+        }
+
+        IUndoStep step = sheet.TakeUndoSegment(worksheet.Id)!;
+        Assert.True(step is CellEditsStep edits && edits.Changes.Count == 2);
+        step.Undo(sheet);
+        Assert.Null(sheet.GetCell(0, 0).FontSize);
+        Assert.False(sheet.GetCell(1, 2).Italic);
+        Assert.Null(sheet.GetCell(0, 0).HorizontalAlignment);
+
+        step.Redo(sheet);
+        foreach (CellAddress address in new[] { new CellAddress(0, 0), new CellAddress(1, 2) })
+        {
+            CellModel cell = sheet.GetCell(address);
+            Assert.Equal(17F, cell.FontSize); Assert.True(cell.Bold); Assert.True(cell.Italic); Assert.True(cell.Underline);
+            Assert.Equal(CellHorizontalAlignment.Center, cell.HorizontalAlignment);
+            Assert.Equal(CellVerticalAlignment.Top, cell.VerticalAlignment);
+        }
+    }
+
     private static SheetModel NewSheet(int rows = 2, int columns = 3)
     {
         var sheet = new SheetModel();

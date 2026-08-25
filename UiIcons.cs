@@ -4,7 +4,10 @@ namespace SheetLite;
 
 internal enum UiIcon
 {
-    Search, Sort, Filter, Database, Split, Freeze, Fill, TextColor, Help, Run, Clear
+    Search, Sort, Filter, Database, Split, Freeze, Fill, TextColor,
+    FontSizeUp, FontSizeDown, Bold, Italic, Underline,
+    AlignLeft, AlignCenter, AlignRight, AlignTop, AlignMiddle, AlignBottom,
+    Help, Run, Clear
 }
 
 /// <summary>Small code-drawn icons keep the portable build self-contained and avoid copied UI assets.</summary>
@@ -21,6 +24,18 @@ internal static class UiIcons
         float s = size / 18F;
         PointF P(float x, float y) => new(x * s, y * s);
         RectangleF R(float x, float y, float w, float h) => new(x * s, y * s, w * s, h * s);
+        void TextGlyph(string text, FontStyle style, float pixels, PointF location)
+        {
+            using var font = new Font("Segoe UI", pixels * s, style, GraphicsUnit.Pixel);
+            g.DrawString(text, font, brush, location);
+        }
+        void AlignmentLines(float y1, float y2, float y3, bool centered)
+        {
+            float shortLeft = centered ? 4.5F : 2.5F;
+            g.DrawLine(pen, P(2.5F, y1), P(15.5F, y1));
+            g.DrawLine(pen, P(shortLeft, y2), P(centered ? 13.5F : 11.5F, y2));
+            g.DrawLine(pen, P(2.5F, y3), P(15.5F, y3));
+        }
 
         switch (icon)
         {
@@ -49,6 +64,39 @@ internal static class UiIcons
                 break;
             case UiIcon.TextColor:
                 using (var font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("A", font, brush, P(4.2F, 1)); g.FillRectangle(brush, R(3, 14, 12, 2));
+                break;
+            case UiIcon.FontSizeUp:
+                TextGlyph("A", FontStyle.Bold, 12, P(1, 1)); g.DrawLine(pen, P(12.5F, 10), P(12.5F, 16)); g.DrawLine(pen, P(9.5F, 13), P(15.5F, 13));
+                break;
+            case UiIcon.FontSizeDown:
+                TextGlyph("A", FontStyle.Bold, 12, P(1, 1)); g.DrawLine(pen, P(9.5F, 13), P(15.5F, 13));
+                break;
+            case UiIcon.Bold:
+                TextGlyph("B", FontStyle.Bold, 14, P(3.2F, 0.5F));
+                break;
+            case UiIcon.Italic:
+                TextGlyph("I", FontStyle.Bold | FontStyle.Italic, 14, P(5.2F, 0.5F));
+                break;
+            case UiIcon.Underline:
+                TextGlyph("U", FontStyle.Regular, 13, P(2.5F, 0)); g.DrawLine(pen, P(3, 15.5F), P(15, 15.5F));
+                break;
+            case UiIcon.AlignLeft:
+                AlignmentLines(4, 9, 14, centered: false);
+                break;
+            case UiIcon.AlignCenter:
+                AlignmentLines(4, 9, 14, centered: true);
+                break;
+            case UiIcon.AlignRight:
+                g.DrawLine(pen, P(2.5F, 4), P(15.5F, 4)); g.DrawLine(pen, P(6.5F, 9), P(15.5F, 9)); g.DrawLine(pen, P(2.5F, 14), P(15.5F, 14));
+                break;
+            case UiIcon.AlignTop:
+                g.DrawLine(pen, P(2.5F, 2.5F), P(15.5F, 2.5F)); g.DrawLine(pen, P(4, 6), P(14, 6)); g.DrawLine(pen, P(5, 9.5F), P(13, 9.5F));
+                break;
+            case UiIcon.AlignMiddle:
+                g.DrawLine(pen, P(2.5F, 9), P(15.5F, 9)); g.DrawLine(pen, P(4, 5), P(14, 5)); g.DrawLine(pen, P(4, 13), P(14, 13));
+                break;
+            case UiIcon.AlignBottom:
+                g.DrawLine(pen, P(5, 8.5F), P(13, 8.5F)); g.DrawLine(pen, P(4, 12), P(14, 12)); g.DrawLine(pen, P(2.5F, 15.5F), P(15.5F, 15.5F));
                 break;
             case UiIcon.Help:
                 using (var font = new Font("Segoe UI", 12F, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("?", font, brush, P(5, 1.5F)); g.DrawEllipse(pen, R(1.5F, 1.5F, 15, 15));

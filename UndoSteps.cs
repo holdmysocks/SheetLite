@@ -19,9 +19,11 @@ internal sealed class WorkbookSnapshotStep(WorkbookModel workbook) : IUndoStep
 }
 
 /// <summary>Immutable cell state captured for change-set undo.</summary>
-internal sealed record CellSnapshot(string Value, Color? BackColor, Color? ForeColor, bool Bold)
+internal sealed record CellSnapshot(string Value, Color? BackColor, Color? ForeColor, float? FontSize,
+    bool Bold, bool Italic, bool Underline, CellHorizontalAlignment? HorizontalAlignment, CellVerticalAlignment? VerticalAlignment)
 {
-    public static CellSnapshot Capture(CellModel cell) => new(cell.Value, cell.BackColor, cell.ForeColor, cell.Bold);
+    public static CellSnapshot Capture(CellModel cell) => new(cell.Value, cell.BackColor, cell.ForeColor, cell.FontSize,
+        cell.Bold, cell.Italic, cell.Underline, cell.HorizontalAlignment, cell.VerticalAlignment);
 }
 
 internal sealed class CellChange(CellAddress address, CellSnapshot before)

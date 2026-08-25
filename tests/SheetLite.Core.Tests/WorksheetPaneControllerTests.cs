@@ -9,7 +9,9 @@ internal sealed class WorksheetPaneControllerTests
     {
         var sheet = new SheetModel();
         sheet.EnsureSize(2, 10);
-        sheet.SetCell(new CellAddress(0, 9), new CellEdit { Value = "=1+1", BackColor = Color.Purple, ForeColor = Color.White });
+        sheet.SetCell(new CellAddress(0, 9), new CellEdit { Value = "=1+1", BackColor = Color.Purple, ForeColor = Color.White,
+            FontSize = 14F, Bold = true, Italic = true, Underline = true,
+            HorizontalAlignment = CellHorizontalAlignment.Right, VerticalAlignment = CellVerticalAlignment.Bottom });
 
         using var grid = new DataGridView();
         var pane = new WorksheetPaneController(grid, new SheetModelDataSource(() => sheet));
@@ -24,6 +26,16 @@ internal sealed class WorksheetPaneControllerTests
         Assert.Equal(Color.Purple, formatting.CellStyle.BackColor);
         Assert.Equal(Color.White, formatting.CellStyle.ForeColor);
         Assert.Equal(Color.White, formatting.CellStyle.SelectionForeColor);
+        Assert.Equal(14F, formatting.CellStyle.Font!.Size);
+        Assert.True(formatting.CellStyle.Font.Bold);
+        Assert.True(formatting.CellStyle.Font.Italic);
+        Assert.True(formatting.CellStyle.Font.Underline);
+        Assert.Equal(DataGridViewContentAlignment.BottomRight, formatting.CellStyle.Alignment);
+
+        sheet.SetCell(new CellAddress(0, 9), CellEdit.Format(verticalAlignment: CellVerticalAlignment.Top));
+        formatting = new DataGridViewCellFormattingEventArgs(9, 0, needed.Value, typeof(string), new DataGridViewCellStyle());
+        InvokePrivate(pane, "OnCellFormatting", formatting);
+        Assert.Equal(DataGridViewContentAlignment.TopRight, formatting.CellStyle.Alignment);
     }
 
     [Test] public void Change_mapping_uses_the_panes_filtered_row_map_and_skips_hidden_cells()
@@ -55,6 +67,23 @@ internal sealed class WorksheetPaneControllerTests
         var changes = new WorksheetChangeSet([new CellAddress(0, 0)], structureChanged: true);
 
         Assert.Equal(0, pane.MapChangedCells(changes).Count);
+    }
+
+    [Test] public void Refresh_row_heights_grows_and_shrinks_after_font_size_changes()
+    {
+        var sheet = new SheetModel();
+        sheet.EnsureSize(1, 2);
+        using var grid = Grid(1, 2);
+        using var pane = new WorksheetPaneController(grid, new SheetModelDataSource(() => sheet));
+        pane.View.Reset(1, 2);
+
+        sheet.SetCell(new CellAddress(0, 0), CellEdit.Format(fontSize: 36F));
+        pane.RefreshRowHeights([0]);
+        Assert.True(grid.Rows[0].Height > grid.RowTemplate.Height);
+
+        sheet.SetCell(new CellAddress(0, 0), CellEdit.ResetFormatting());
+        pane.RefreshRowHeights([0]);
+        Assert.Equal(grid.RowTemplate.Height, grid.Rows[0].Height);
     }
 
     [Test] public void Two_panes_bound_to_one_model_keep_independent_change_mappings()

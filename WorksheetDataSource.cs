@@ -55,7 +55,9 @@ internal sealed class SheetModelDataSource : IWorksheetDataSource, IDisposable
         CellModel cell = Sheet.GetCell(address);
         Color background = cell.BackColor ?? Theme.CellBackground;
         Color foreground = cell.ForeColor ?? Theme.AdaptiveCellText(background);
-        return new(GetEvaluatedText(address), background, foreground, cell.Bold);
+        return new(GetEvaluatedText(address), background, foreground, cell.FontSize ?? CellModel.DefaultFontSize,
+            cell.Bold, cell.Italic, cell.Underline, cell.HorizontalAlignment ?? CellHorizontalAlignment.Left,
+            cell.VerticalAlignment ?? CellVerticalAlignment.Middle);
     }
 
     public void SetCell(CellAddress address, in CellEdit edit) => Sheet.SetCell(address, edit);

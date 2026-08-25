@@ -104,7 +104,9 @@ internal sealed partial class SheetModel
             CellModel cell = GetCell(address.Row, address.Column);
             var before = CellSnapshot.Capture(cell);
             if (before == state) continue;
-            cell.Value = state.Value; cell.BackColor = state.BackColor; cell.ForeColor = state.ForeColor; cell.Bold = state.Bold;
+            cell.Value = state.Value; cell.BackColor = state.BackColor; cell.ForeColor = state.ForeColor; cell.FontSize = state.FontSize;
+            cell.Bold = state.Bold; cell.Italic = state.Italic; cell.Underline = state.Underline;
+            cell.HorizontalAlignment = state.HorizontalAlignment; cell.VerticalAlignment = state.VerticalAlignment;
             if (before.Value != state.Value) valueChanges.Add(address);
             else formattingChanges.Add(address);
         }

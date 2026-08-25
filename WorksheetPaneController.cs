@@ -13,8 +13,11 @@ internal sealed class WorksheetPaneController : IDisposable
     public readonly DataGridView Grid;
     public readonly SheetModelDataSource Source;
     public readonly WorksheetView View = WorksheetView.Identity(100, 26);
-    public Font RegularFont { get; set; } = SystemFonts.MessageBoxFont!;
-    public Font BoldFont { get; set; } = SystemFonts.MessageBoxFont!;
+    private Font regularFont = SystemFonts.MessageBoxFont!;
+    private Font boldFont = SystemFonts.MessageBoxFont!;
+    private readonly Dictionary<(float Size, FontStyle Style), Font> cellFonts = [];
+    public Font RegularFont { get => regularFont; set { regularFont = value; ClearFontCache(); } }
+    public Font BoldFont { get => boldFont; set { boldFont = value; ClearFontCache(); } }
 
     private CellAddress? editAddress;
     private readonly Func<bool>? mayFlush;
@@ -89,6 +92,11 @@ internal sealed class WorksheetPaneController : IDisposable
         }
         if (rowHeaderMenu is not null) Grid.RowTemplate.HeaderCell.ContextMenuStrip = rowHeaderMenu;
         Grid.RowCount = View.DisplayRowCount;
+        RefreshRowHeights(Enumerable.Range(0, View.DisplayRowCount).Where(displayRow =>
+        {
+            int modelRow = View.ModelRowForDisplayRow(displayRow);
+            return modelRow < sheet.Rows.Count && sheet.Rows[modelRow].Any(cell => cell.FontSize is not null);
+        }));
         Grid.Invalidate();
     }
 
@@ -108,7 +116,29 @@ internal sealed class WorksheetPaneController : IDisposable
         ApplyView();
     }
 
-    public void InvalidateCell(int displayColumn, int displayRow) => Grid.InvalidateCell(displayColumn, displayRow);
+    public void InvalidateCell(int displayColumn, int displayRow)
+    {
+        // Virtual cells cache their formatted style separately from their painted pixels.
+        // UpdateCellValue forces CellFormatting to run again before the repaint so a style-only
+        // edit (especially switching vertical alignment) cannot display the previous style.
+        Grid.UpdateCellValue(displayColumn, displayRow);
+        Grid.InvalidateCell(displayColumn, displayRow);
+    }
+
+    public void RefreshRowHeights(IEnumerable<int> displayRows)
+    {
+        foreach (int displayRow in displayRows.Distinct())
+        {
+            if (displayRow < 0 || displayRow >= View.DisplayRowCount || displayRow >= Grid.RowCount) continue;
+            int modelRow = View.ModelRowForDisplayRow(displayRow);
+            float largestSize = modelRow < Model.Rows.Count && Model.Rows[modelRow].Count > 0
+                ? Model.Rows[modelRow].Max(cell => cell.FontSize ?? CellModel.DefaultFontSize)
+                : CellModel.DefaultFontSize;
+            Grid.Rows[displayRow].Height = RowHeightFor(largestSize);
+        }
+    }
+
+    private int RowHeightFor(float fontSize) => Math.Max(Grid.RowTemplate.Height, (int)Math.Ceiling(fontSize * Grid.DeviceDpi / 72F) + 7);
 
     /// <summary>Commits an open editor before a command snapshots or renders state. No-op when the host blocks it.</summary>
     public void FlushPendingEdits()
@@ -147,7 +177,48 @@ internal sealed class WorksheetPaneController : IDisposable
         CellDisplayValue display = Source.GetDisplayValue(new(row, column));
         e.CellStyle!.BackColor = display.BackColor; e.CellStyle.ForeColor = display.ForeColor;
         e.CellStyle.SelectionForeColor = cell.ForeColor ?? Theme.AdaptiveCellText(e.CellStyle.SelectionBackColor);
-        e.CellStyle.Font = display.Bold ? BoldFont : RegularFont;
+        e.CellStyle.Font = FontFor(display);
+        e.CellStyle.Alignment = AlignmentFor(display.HorizontalAlignment, display.VerticalAlignment);
+    }
+
+    private Font FontFor(CellDisplayValue display)
+    {
+        FontStyle style = FontStyle.Regular;
+        if (display.Bold) style |= FontStyle.Bold;
+        if (display.Italic) style |= FontStyle.Italic;
+        if (display.Underline) style |= FontStyle.Underline;
+        if (Math.Abs(display.FontSize - RegularFont.Size) < 0.01F)
+        {
+            if (style == FontStyle.Regular) return RegularFont;
+            if (style == FontStyle.Bold) return BoldFont;
+        }
+        var key = (display.FontSize, style);
+        if (!cellFonts.TryGetValue(key, out Font? font))
+        {
+            font = new Font(RegularFont.FontFamily, display.FontSize, style, GraphicsUnit.Point);
+            cellFonts[key] = font;
+        }
+        return font;
+    }
+
+    private static DataGridViewContentAlignment AlignmentFor(CellHorizontalAlignment horizontal, CellVerticalAlignment vertical) =>
+        (horizontal, vertical) switch
+        {
+            (CellHorizontalAlignment.Left, CellVerticalAlignment.Top) => DataGridViewContentAlignment.TopLeft,
+            (CellHorizontalAlignment.Center, CellVerticalAlignment.Top) => DataGridViewContentAlignment.TopCenter,
+            (CellHorizontalAlignment.Right, CellVerticalAlignment.Top) => DataGridViewContentAlignment.TopRight,
+            (CellHorizontalAlignment.Left, CellVerticalAlignment.Middle) => DataGridViewContentAlignment.MiddleLeft,
+            (CellHorizontalAlignment.Center, CellVerticalAlignment.Middle) => DataGridViewContentAlignment.MiddleCenter,
+            (CellHorizontalAlignment.Right, CellVerticalAlignment.Middle) => DataGridViewContentAlignment.MiddleRight,
+            (CellHorizontalAlignment.Left, CellVerticalAlignment.Bottom) => DataGridViewContentAlignment.BottomLeft,
+            (CellHorizontalAlignment.Center, CellVerticalAlignment.Bottom) => DataGridViewContentAlignment.BottomCenter,
+            _ => DataGridViewContentAlignment.BottomRight
+        };
+
+    private void ClearFontCache()
+    {
+        foreach (Font font in cellFonts.Values) font.Dispose();
+        cellFonts.Clear();
     }
 
     private void OnBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)
@@ -171,7 +242,7 @@ internal sealed class WorksheetPaneController : IDisposable
         if (changes.RequiresFullRefresh) { Grid.Invalidate(); return; }
         IReadOnlyList<(int Column, int Row)> cells = MapChangedCells(changes);
         if (cells.Count > TargetedInvalidationThreshold) { Grid.Invalidate(); return; }
-        foreach (var (column, row) in cells) Grid.InvalidateCell(column, row);
+        foreach (var (column, row) in cells) InvalidateCell(column, row);
     }
 
     private void OnGridDisposed(object? sender, EventArgs e) => Dispose();
@@ -182,6 +253,7 @@ internal sealed class WorksheetPaneController : IDisposable
         disposed = true;
         Source.Changed -= OnSourceChanged;
         Grid.Disposed -= OnGridDisposed;
+        ClearFontCache();
         Source.Dispose();
     }
 }

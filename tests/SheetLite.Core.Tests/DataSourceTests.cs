@@ -49,13 +49,19 @@ internal sealed class DataSourceTests
     {
         var sheet = NewSheet();
         sheet.SetCellValue(0, 0, "styled");
-        sheet.SetCell(new CellAddress(0, 0), CellEdit.Format(backColor: Color.Purple, bold: true));
+        sheet.SetCell(new CellAddress(0, 0), CellEdit.Format(backColor: Color.Purple, fontSize: 13F, bold: true, italic: true, underline: true,
+            horizontalAlignment: CellHorizontalAlignment.Center, verticalAlignment: CellVerticalAlignment.Bottom));
         var display = new SheetModelDataSource(() => sheet).GetDisplayValue(new CellAddress(0, 0));
 
         Assert.Equal("styled", display.Text);
         Assert.Equal(Color.Purple, display.BackColor);
         Assert.Equal(Theme.Foreground, display.ForeColor); // unset ForeColor adapts to the dark theme background
+        Assert.Equal(13F, display.FontSize);
         Assert.True(display.Bold);
+        Assert.True(display.Italic);
+        Assert.True(display.Underline);
+        Assert.Equal(CellHorizontalAlignment.Center, display.HorizontalAlignment);
+        Assert.Equal(CellVerticalAlignment.Bottom, display.VerticalAlignment);
     }
 
     [Test] public void Default_text_color_adapts_to_custom_cell_background()

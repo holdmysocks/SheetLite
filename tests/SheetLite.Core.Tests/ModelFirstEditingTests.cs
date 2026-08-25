@@ -127,6 +127,48 @@ internal sealed class ModelFirstEditingTests : IDisposable
         Assert.NotNull(cell.ForeColor);
     }
 
+    [Test] public void Xlsx_roundtrip_preserves_extended_formatting_on_an_empty_tail_cell()
+    {
+        WorkbookModel workbook = WorkbookModel.CreateBlank();
+        SheetModel model = workbook.ActiveSheet.Sheet;
+        model.SetCell(new CellAddress(140, 7), CellEdit.Format(fontSize: 16F, bold: true, italic: true, underline: true,
+            horizontalAlignment: CellHorizontalAlignment.Right, verticalAlignment: CellVerticalAlignment.Bottom));
+
+        string file = TempPath(".xlsx");
+        XlsxCodec.SaveWorkbook(file, workbook);
+        CellModel cell = XlsxCodec.LoadWorkbook(file).ActiveSheet.Sheet.GetCell(140, 7);
+
+        Assert.Equal("", cell.Value);
+        Assert.Equal(16F, cell.FontSize); Assert.True(cell.Bold); Assert.True(cell.Italic); Assert.True(cell.Underline);
+        Assert.Equal(CellHorizontalAlignment.Right, cell.HorizontalAlignment);
+        Assert.Equal(CellVerticalAlignment.Bottom, cell.VerticalAlignment);
+    }
+
+    [Test] public void Xlsx_roundtrip_preserves_alignment_axes_independently()
+    {
+        WorkbookModel workbook = WorkbookModel.CreateBlank();
+        SheetModel model = workbook.ActiveSheet.Sheet;
+        model.SetCell(new CellAddress(0, 0), CellEdit.Format(horizontalAlignment: CellHorizontalAlignment.Right));
+        model.SetCell(new CellAddress(0, 1), CellEdit.Format(verticalAlignment: CellVerticalAlignment.Top));
+
+        string firstFile = TempPath(".xlsx");
+        XlsxCodec.SaveWorkbook(firstFile, workbook);
+        WorkbookModel loaded = XlsxCodec.LoadWorkbook(firstFile);
+        CellModel horizontalOnly = loaded.ActiveSheet.Sheet.GetCell(0, 0);
+        CellModel verticalOnly = loaded.ActiveSheet.Sheet.GetCell(0, 1);
+
+        Assert.Equal(CellHorizontalAlignment.Right, horizontalOnly.HorizontalAlignment);
+        Assert.Null(horizontalOnly.VerticalAlignment);
+        Assert.Null(verticalOnly.HorizontalAlignment);
+        Assert.Equal(CellVerticalAlignment.Top, verticalOnly.VerticalAlignment);
+
+        string secondFile = TempPath(".xlsx");
+        XlsxCodec.SaveWorkbook(secondFile, loaded);
+        WorkbookModel loadedAgain = XlsxCodec.LoadWorkbook(secondFile);
+        Assert.Null(loadedAgain.ActiveSheet.Sheet.GetCell(0, 0).VerticalAlignment);
+        Assert.Null(loadedAgain.ActiveSheet.Sheet.GetCell(0, 1).HorizontalAlignment);
+    }
+
     [Test] public void Xlsx_roundtrip_preserves_incrementally_updated_formula_and_cached_result()
     {
         WorkbookModel workbook = WorkbookModel.CreateBlank();

@@ -97,4 +97,27 @@ internal sealed class GridTypesTests
         Assert.Null(cell.BackColor);
         Assert.True(cell.Bold);
     }
+
+    [Test] public void CellEdit_applies_extended_formatting_selectively_and_reset_clears_it()
+    {
+        var cell = new CellModel { Value = "styled", BackColor = Color.Red, Bold = true };
+        CellEdit.Format(fontSize: 14F, italic: true, underline: true,
+            horizontalAlignment: CellHorizontalAlignment.Right, verticalAlignment: CellVerticalAlignment.Bottom).ApplyTo(cell);
+
+        Assert.Equal(14F, cell.FontSize);
+        Assert.True(cell.Bold);
+        Assert.True(cell.Italic);
+        Assert.True(cell.Underline);
+        Assert.Equal(CellHorizontalAlignment.Right, cell.HorizontalAlignment);
+        Assert.Equal(CellVerticalAlignment.Bottom, cell.VerticalAlignment);
+        Assert.Equal(Color.Red, cell.BackColor);
+
+        CellEdit.ResetFormatting().ApplyTo(cell);
+        Assert.Equal("styled", cell.Value);
+        Assert.Null(cell.FontSize);
+        Assert.False(cell.Bold); Assert.False(cell.Italic); Assert.False(cell.Underline);
+        Assert.Null(cell.HorizontalAlignment);
+        Assert.Null(cell.VerticalAlignment);
+        Assert.False(cell.HasFormatting);
+    }
 }

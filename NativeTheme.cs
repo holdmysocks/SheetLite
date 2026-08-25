@@ -81,6 +81,9 @@ internal sealed class DraculaColorTable : ProfessionalColorTable
     public override Color ButtonSelectedGradientBegin => Theme.Comment;
     public override Color ButtonSelectedGradientMiddle => Theme.Comment;
     public override Color ButtonSelectedGradientEnd => Theme.Comment;
+    public override Color ButtonCheckedGradientBegin => Theme.Selection;
+    public override Color ButtonCheckedGradientMiddle => Theme.Selection;
+    public override Color ButtonCheckedGradientEnd => Theme.Selection;
 }
 
 internal sealed class DraculaRenderer : ToolStripProfessionalRenderer
