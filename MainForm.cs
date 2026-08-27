@@ -228,8 +228,12 @@ internal sealed partial class MainForm : Form
             const int wsCaption = 0x00C00000, wsThickFrame = 0x00040000, wsMinimizeBox = 0x00020000, wsMaximizeBox = 0x00010000, wsSysMenu = 0x00080000;
             const int wsExDlgModalFrame = 0x00000001, wsExWindowEdge = 0x00000100, wsExClientEdge = 0x00000200, wsExStaticEdge = 0x00020000;
             CreateParams parameters = base.CreateParams;
-            parameters.Style &= ~(wsCaption | wsThickFrame);
-            parameters.Style |= wsMinimizeBox | wsMaximizeBox | wsSysMenu;
+            // Keep the native sizing frame even though the non-client frame is painted by
+            // SheetLite. Windows Snap and FancyZones use WS_THICKFRAME to identify a window
+            // as resizable and eligible for placement; WM_NCCALCSIZE below still removes the
+            // visible system border so the custom chrome is unchanged.
+            parameters.Style &= ~wsCaption;
+            parameters.Style |= wsThickFrame | wsMinimizeBox | wsMaximizeBox | wsSysMenu;
             parameters.ExStyle &= ~(wsExDlgModalFrame | wsExWindowEdge | wsExClientEdge | wsExStaticEdge);
             return parameters;
         }
@@ -250,14 +254,17 @@ internal sealed partial class MainForm : Form
         const uint swpNoSize = 0x0001, swpNoMove = 0x0002, swpNoZOrder = 0x0004, swpNoActivate = 0x0010, swpFrameChanged = 0x0020;
         long style = GetWindowLongPtr(Handle, gwlStyle).ToInt64(), exStyle = GetWindowLongPtr(Handle, gwlExStyle).ToInt64();
         long cleanStyle = style & ~wsCaption, cleanExStyle = exStyle & ~(wsExDlgModalFrame | wsExWindowEdge | wsExClientEdge | wsExStaticEdge);
-        if (cleanStyle == style && cleanExStyle == exStyle) return;
-        SetWindowLongPtr(Handle, gwlStyle, (IntPtr)cleanStyle); SetWindowLongPtr(Handle, gwlExStyle, (IntPtr)cleanExStyle);
+        if (cleanStyle != style) SetWindowLongPtr(Handle, gwlStyle, (IntPtr)cleanStyle);
+        if (cleanExStyle != exStyle) SetWindowLongPtr(Handle, gwlExStyle, (IntPtr)cleanExStyle);
+        // CreateParams normally supplies the final styles before the handle exists, so there
+        // may be no style bits to change here. Still force a non-client recalculation: without
+        // it, Windows keeps drawing the initial WS_THICKFRAME border until the next resize.
         SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, swpNoSize | swpNoMove | swpNoZOrder | swpNoActivate | swpFrameChanged);
     }
 
     protected override void WndProc(ref Message message)
     {
-        const int wmSetCursor = 0x20, wmNcCalcSize = 0x83, wmNcHitTest = 0x84, wmNcLeftButtonDown = 0xA1, wmSysCommand = 0x112, scSize = 0xF000, grip = 7;
+        const int wmSetCursor = 0x20, wmNcCalcSize = 0x83, wmNcHitTest = 0x84, wmNcPaint = 0x85, wmNcActivate = 0x86, wmNcLeftButtonDown = 0xA1, wmSysCommand = 0x112, scSize = 0xF000, grip = 7;
         if (message.Msg == wmSetCursor && WindowState == FormWindowState.Normal)
         {
             int hit = ResizeHitAt(PointToClient(Cursor.Position), grip);
@@ -268,6 +275,15 @@ internal sealed partial class MainForm : Form
         // forms while resizing or rebuilding the handle. Letting either reach the
         // default procedure can restore the native caption over our custom chrome.
         if (message.Msg == wmNcCalcSize) { message.Result = IntPtr.Zero; return; }
+        // Opening an owned dialog deactivates this window. Prevent the default procedure
+        // from repainting WS_THICKFRAME in its inactive colors; SheetLite owns the entire
+        // frame and paints its border through WindowBorderOverlay.
+        if (message.Msg == wmNcPaint) { message.Result = IntPtr.Zero; return; }
+        if (message.Msg == wmNcActivate && WindowState != FormWindowState.Minimized)
+        {
+            message.LParam = (IntPtr)(-1); // DefWindowProc updates activation without repainting the non-client area.
+            base.WndProc(ref message); message.Result = (IntPtr)1; return;
+        }
         if (message.Msg == wmNcLeftButtonDown && WindowState == FormWindowState.Normal)
         {
             int hit = message.WParam.ToInt32();
@@ -560,6 +576,7 @@ internal sealed partial class MainForm : Form
     private void SelectHeaderRange(object? sender, DataGridViewCellMouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right) return;
+        if (e.Button == MouseButtons.Left && HeaderResizeHasPriority(grid, e)) return;
         bool clickedSelection = false;
         if (e.RowIndex >= 0 && e.ColumnIndex == -1)
         {

@@ -541,8 +541,19 @@ internal sealed partial class MainForm
     }
     private static string JsonValue(JsonElement value) => value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ValueKind == JsonValueKind.Null ? "" : value.ToString();
 
-    private void TrackHeaderDropDown(object? sender, DataGridViewCellMouseEventArgs e) => SetHeaderDropDownHover(e.RowIndex == -1 && e.ColumnIndex >= 0 && e.X >= grid.Columns[e.ColumnIndex].Width - 24 ? e.ColumnIndex : -1);
+    private void TrackHeaderDropDown(object? sender, DataGridViewCellMouseEventArgs e) => SetHeaderDropDownHover(IsHeaderDropDownHit(grid, e) ? e.ColumnIndex : -1);
     private void SetHeaderDropDownHover(int column) { if (headerDropDownHoverColumn == column) return; int old = headerDropDownHoverColumn; headerDropDownHoverColumn = column; if (old >= 0) grid.InvalidateCell(old, -1); if (column >= 0) grid.InvalidateCell(column, -1); }
+
+    private static bool IsHeaderDropDownHit(DataGridView pane, DataGridViewCellMouseEventArgs e) =>
+        e.RowIndex == -1 && e.ColumnIndex >= 0 && e.X >= pane.Columns[e.ColumnIndex].Width - 24 && !HeaderResizeHasPriority(pane, e);
+
+    private static bool HeaderResizeHasPriority(DataGridView pane, DataGridViewCellMouseEventArgs e)
+    {
+        if (e.RowIndex != -1 || e.ColumnIndex < 0) return false;
+        bool resizeCursor = pane.Cursor == Cursors.VSplit || pane.Cursor == Cursors.SizeWE || Cursor.Current == Cursors.VSplit || Cursor.Current == Cursors.SizeWE;
+        int grip = Math.Max(6, (int)Math.Ceiling(6 * pane.DeviceDpi / 96F));
+        return resizeCursor || e.X >= pane.Columns[e.ColumnIndex].Width - grip;
+    }
 
     private void PaintHeaderDropDown(Graphics graphics, Rectangle bounds, int column)
     {
@@ -554,7 +565,7 @@ internal sealed partial class MainForm
 
     private void ShowHeaderFilterDropDown(object? sender, DataGridViewCellMouseEventArgs e)
     {
-        if (e.Button != MouseButtons.Left || e.RowIndex != -1 || e.ColumnIndex < 0 || e.X < grid.Columns[e.ColumnIndex].Width - 24) return; grid.CurrentCell = grid[e.ColumnIndex, Math.Max(0, grid.CurrentCell?.RowIndex ?? 0)]; ShowColumnFilterMenu(e.ColumnIndex);
+        if (e.Button != MouseButtons.Left || !IsHeaderDropDownHit(grid, e)) return; grid.CurrentCell = grid[e.ColumnIndex, Math.Max(0, grid.CurrentCell?.RowIndex ?? 0)]; ShowColumnFilterMenu(e.ColumnIndex);
     }
 
     private void ShowColumnFilterMenu(int column)
