@@ -320,6 +320,15 @@ internal sealed partial class MainForm : Form
 
     internal Cursor? ResizeCursorAtScreen(Point screenPoint) => WindowState == FormWindowState.Normal ? ResizeCursorForHit(ResizeHitAt(PointToClient(screenPoint), 7)) : null;
 
+    internal bool BeginResizeAtScreen(Point screenPoint)
+    {
+        if (WindowState != FormWindowState.Normal) return false;
+        int hit = ResizeHitAt(PointToClient(screenPoint), 7);
+        if (hit is < 10 or > 17) return false;
+        ReleaseCapture(); PostMessage(Handle, 0x112, 0xF000 | (hit - 9), 0);
+        return true;
+    }
+
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr handle, int message, int wParam, int lParam);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr handle, int message, int wParam, int lParam);
@@ -343,7 +352,7 @@ internal sealed partial class MainForm : Form
         if (toolbar.LayoutSettings is FlowLayoutSettings flow) { flow.FlowDirection = FlowDirection.LeftToRight; flow.WrapContents = true; }
         ToolStripButton Add(UiIcon icon, string tip, Action action)
         {
-            var b = new ToolStripButton { Alignment = ToolStripItemAlignment.Left, Image = UiIcons.Draw(icon, Theme.Foreground), ToolTipText = tip, AccessibleName = tip, DisplayStyle = ToolStripItemDisplayStyle.Image, AutoSize = false, Size = new Size(28, 30), ImageScaling = ToolStripItemImageScaling.None, Margin = Padding.Empty, Padding = Padding.Empty, Overflow = ToolStripItemOverflow.Never };
+            var b = new ToolStripButton { Alignment = ToolStripItemAlignment.Left, Image = UiIcons.Draw(icon, Theme.Foreground), ToolTipText = tip, AccessibleName = tip, DisplayStyle = ToolStripItemDisplayStyle.Image, AutoSize = false, Size = new Size(28, 30), ImageScaling = ToolStripItemImageScaling.None, Margin = new Padding(0, 2, 0, 2), Padding = Padding.Empty, Overflow = ToolStripItemOverflow.Never };
             b.Click += (_, _) => action(); toolbar.Items.Add(b); return b;
         }
         void Divider() => toolbar.Items.Add(new ToolStripSeparator { AutoSize = false, Size = new Size(8, 24), Margin = new Padding(1, 5, 1, 5) });
@@ -870,10 +879,10 @@ internal sealed partial class MainForm : Form
         if (d.ShowDialog(this) != DialogResult.OK) return false; return TrySaveTo(d.FileName);
     }
 
-    private void Render()
+    private void Render(bool preserveColumnWidths = false)
     {
         loading = true;
-        primaryPane.RenderSheet(model);
+        primaryPane.RenderSheet(model, preserveColumnWidths);
         ApplyFreeze(); loading = false; if (grid.RowCount > 0 && grid.ColumnCount > 0) grid.CurrentCell = grid[0, 0]; ReapplyDockedFilterIfActive(); RefreshSharedSecondaryFromModel(); UpdateStatus();
     }
     /// <summary>
@@ -986,14 +995,14 @@ internal sealed partial class MainForm : Form
     private void DeleteContents() => DeleteContents(true);
     private void DeleteContents(bool snapshot) { if (snapshot) PushUndo(); using (model.BeginUpdate()) foreach (DataGridViewCell cell in grid.SelectedCells) model.SetCellValue(ModelRow(cell.RowIndex), cell.ColumnIndex, ""); ReapplyDockedFilterIfActive(); SetDirty(); }
 
-    private void InsertRow() { int index = ModelRow(grid.CurrentCell?.RowIndex ?? 0); PushUndo(); model.InsertRows(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, grid.CurrentCell?.ColumnIndex ?? 0); }
-    private void InsertRowBelow() { int lastDisplay = grid.SelectedCells.Count > 0 ? grid.SelectedCells.Cast<DataGridViewCell>().Max(c => c.RowIndex) : grid.CurrentCell?.RowIndex ?? -1; int index = Math.Min(ModelRow(Math.Max(0, Math.Min(lastDisplay, primaryPane.View.DisplayRowCount - 1))) + 1, model.Rows.Count); PushUndo(); model.InsertRows(index); RenderSelect(Math.Min(index, model.Rows.Count - 1), grid.CurrentCell?.ColumnIndex ?? 0); }
-    private void DeleteRows() { var indices = grid.SelectedCells.Cast<DataGridViewCell>().Select(c => ModelRow(c.RowIndex)).Distinct().Where(i => i < model.Rows.Count).OrderDescending().ToList(); if (indices.Count == 0) return; PushUndo(); model.DeleteRows(indices); RenderSelect(0, 0); }
-    private void MoveRow(int delta) { int i = grid.CurrentCell?.RowIndex ?? -1, j = i + delta; if (i < 0 || j < 0 || j >= primaryPane.View.DisplayRowCount) return; PushUndo(); model.SwapRows(ModelRow(i), ModelRow(j)); RenderSelect(j, grid.CurrentCell?.ColumnIndex ?? 0); }
-    private void InsertColumn() { int index = grid.CurrentCell?.ColumnIndex ?? 0; PushUndo(); model.InsertColumns(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, index); }
-    private void InsertColumnRight() { int index = grid.SelectedCells.Count > 0 ? grid.SelectedCells.Cast<DataGridViewCell>().Max(c => c.ColumnIndex) + 1 : (grid.CurrentCell?.ColumnIndex ?? 0) + 1; index = Math.Min(index, model.ColumnCount); PushUndo(); model.InsertColumns(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, Math.Min(index, model.ColumnCount - 1)); }
-    private void DeleteColumns() { var indices = grid.SelectedCells.Cast<DataGridViewCell>().Select(c => c.ColumnIndex).Distinct().Where(i => i < model.ColumnCount).OrderDescending().ToList(); if (indices.Count == 0) return; PushUndo(); model.DeleteColumns(indices); RenderSelect(0, Math.Min(indices.Min(), model.ColumnCount - 1)); }
-    private void MoveColumn(int delta) { int i = grid.CurrentCell?.ColumnIndex ?? -1, j = i + delta; if (i < 0 || j < 0 || j >= model.ColumnCount) return; PushUndo(); model.SwapColumns(i, j); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, j); }
+    private void InsertRow() { int index = ModelRow(grid.CurrentCell?.RowIndex ?? 0); PushUndo(); model.InsertRows(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, grid.CurrentCell?.ColumnIndex ?? 0, preserveViewport: true); }
+    private void InsertRowBelow() { int lastDisplay = grid.SelectedCells.Count > 0 ? grid.SelectedCells.Cast<DataGridViewCell>().Max(c => c.RowIndex) : grid.CurrentCell?.RowIndex ?? -1; int index = Math.Min(ModelRow(Math.Max(0, Math.Min(lastDisplay, primaryPane.View.DisplayRowCount - 1))) + 1, model.Rows.Count); PushUndo(); model.InsertRows(index); RenderSelect(Math.Min(index, model.Rows.Count - 1), grid.CurrentCell?.ColumnIndex ?? 0, preserveViewport: true); }
+    private void DeleteRows() { var indices = grid.SelectedCells.Cast<DataGridViewCell>().Select(c => ModelRow(c.RowIndex)).Distinct().Where(i => i < model.Rows.Count).OrderDescending().ToList(); if (indices.Count == 0) return; int focusRow = grid.SelectedCells.Cast<DataGridViewCell>().Min(c => c.RowIndex), focusColumn = grid.CurrentCell?.ColumnIndex ?? 0; PushUndo(); model.DeleteRows(indices); RenderSelect(Math.Min(focusRow, model.Rows.Count - 1), focusColumn, preserveViewport: true); }
+    private void MoveRow(int delta) { int i = grid.CurrentCell?.RowIndex ?? -1, j = i + delta; if (i < 0 || j < 0 || j >= primaryPane.View.DisplayRowCount) return; PushUndo(); model.SwapRows(ModelRow(i), ModelRow(j)); RenderSelect(j, grid.CurrentCell?.ColumnIndex ?? 0, preserveViewport: true); }
+    private void InsertColumn() { int index = grid.CurrentCell?.ColumnIndex ?? 0; PushUndo(); model.InsertColumns(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, index, preserveViewport: true); }
+    private void InsertColumnRight() { int index = grid.SelectedCells.Count > 0 ? grid.SelectedCells.Cast<DataGridViewCell>().Max(c => c.ColumnIndex) + 1 : (grid.CurrentCell?.ColumnIndex ?? 0) + 1; index = Math.Min(index, model.ColumnCount); PushUndo(); model.InsertColumns(index); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, Math.Min(index, model.ColumnCount - 1), preserveViewport: true); }
+    private void DeleteColumns() { var indices = grid.SelectedCells.Cast<DataGridViewCell>().Select(c => c.ColumnIndex).Distinct().Where(i => i < model.ColumnCount).OrderDescending().ToList(); if (indices.Count == 0) return; int focusRow = grid.CurrentCell?.RowIndex ?? 0; PushUndo(); model.DeleteColumns(indices); RenderSelect(focusRow, Math.Min(indices.Min(), model.ColumnCount - 1), preserveViewport: true); }
+    private void MoveColumn(int delta) { int i = grid.CurrentCell?.ColumnIndex ?? -1, j = i + delta; if (i < 0 || j < 0 || j >= model.ColumnCount) return; PushUndo(); model.SwapColumns(i, j); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, j, preserveViewport: true); }
 
     private void Sort(bool ascending)
     {
@@ -1157,7 +1166,26 @@ internal sealed partial class MainForm : Form
     private void AutoSizeColumns() { foreach (int c in grid.SelectedCells.Cast<DataGridViewCell>().Select(x => x.ColumnIndex).Distinct()) grid.Columns[c].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells; BeginInvoke(() => { foreach (DataGridViewColumn c in grid.Columns) if (c.AutoSizeMode != DataGridViewAutoSizeColumnMode.None) { int w = Math.Min(c.Width, 400); c.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; c.Width = w; } }); }
 
     private void EnsureGrid(int rows, int columns) { if (rows <= grid.RowCount && columns <= grid.ColumnCount) return; FlushPendingEdits(grid); model.EnsureSize(Math.Max(rows, grid.RowCount), Math.Max(columns, grid.ColumnCount)); Render(); }
-    private void RenderSelect(int row, int col) { Render(); grid.CurrentCell = grid[Math.Max(0, col), Math.Max(0, row)]; SetDirty(); }
+    private void RenderSelect(int row, int col, bool preserveViewport = false)
+    {
+        int firstRow = preserveViewport && grid.RowCount > 0 ? Math.Max(0, grid.FirstDisplayedScrollingRowIndex) : 0;
+        int firstColumn = preserveViewport && grid.ColumnCount > 0 ? Math.Max(0, grid.FirstDisplayedScrollingColumnIndex) : 0;
+        Render(preserveColumnWidths: true);
+        if (grid.RowCount > 0 && grid.ColumnCount > 0)
+        {
+            grid.CurrentCell = grid[Math.Clamp(col, 0, grid.ColumnCount - 1), Math.Clamp(row, 0, grid.RowCount - 1)];
+            if (preserveViewport)
+            {
+                try
+                {
+                    grid.FirstDisplayedScrollingRowIndex = Math.Clamp(firstRow, 0, grid.RowCount - 1);
+                    grid.FirstDisplayedScrollingColumnIndex = Math.Clamp(firstColumn, 0, grid.ColumnCount - 1);
+                }
+                catch (InvalidOperationException) { }
+            }
+        }
+        SetDirty();
+    }
     private static string ColumnName(int index) => CellAddress.ColumnName(index);
     private void SetDirty()
     {
@@ -1296,6 +1324,15 @@ internal sealed class SmoothDataGridView : DataGridView
         UpdateStyles();
     }
 
+    protected override void OnScroll(ScrollEventArgs e)
+    {
+        base.OnScroll(e);
+        // Custom selection handles are painted above the cells. DataGridView scrolls its
+        // non-frozen area by copying pixels, so repaint the whole control to avoid trails
+        // where that overlay crosses a frozen-pane boundary.
+        Invalidate();
+    }
+
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData) =>
         FindForm() is MainForm form && form.TryProcessAppShortcut(keyData) || base.ProcessCmdKey(ref msg, keyData);
 }
@@ -1394,11 +1431,14 @@ internal sealed class ResizeCursorMessageFilter(MainForm form) : IMessageFilter
 
     public bool PreFilterMessage(ref Message message)
     {
-        if (form.IsDisposed || !form.Visible || message.Msg is not (0x20 or 0x200 or 0xA0)) return false;
+        const int wmSetCursor = 0x20, wmNcMouseMove = 0xA0, wmMouseMove = 0x200, wmLeftButtonDown = 0x201;
+        if (form.IsDisposed || !form.Visible || message.Msg is not (wmSetCursor or wmNcMouseMove or wmMouseMove or wmLeftButtonDown)) return false;
         Cursor? cursor = form.ResizeCursorAtScreen(Cursor.Position);
         if (cursor is not null)
         {
-            Cursor.Current = cursor; resizeCursorSet = true; return message.Msg == 0x20;
+            Cursor.Current = cursor; resizeCursorSet = true;
+            if (message.Msg == wmLeftButtonDown) return form.BeginResizeAtScreen(Cursor.Position);
+            return message.Msg == wmSetCursor;
         }
         if (resizeCursorSet) { Cursor.Current = Cursors.Default; resizeCursorSet = false; }
         return false;

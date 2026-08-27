@@ -5,6 +5,24 @@ namespace SheetLite.Tests;
 
 internal sealed class WorksheetPaneControllerTests
 {
+    [Test] public void Render_can_preserve_custom_column_widths()
+    {
+        var sheet = new SheetModel();
+        sheet.EnsureSize(2, 26);
+        using var grid = new DataGridView();
+        using var pane = new WorksheetPaneController(grid, new SheetModelDataSource(() => sheet));
+        pane.RenderSheet(sheet);
+        grid.Columns[0].Width = 173;
+        grid.Columns[4].Width = 247;
+        sheet.EnsureSize(2, 27);
+
+        pane.RenderSheet(sheet, preserveColumnWidths: true);
+
+        Assert.Equal(173, grid.Columns[0].Width);
+        Assert.Equal(247, grid.Columns[4].Width);
+        Assert.Equal(110, grid.Columns[26].Width);
+    }
+
     [Test] public void Virtual_callbacks_read_and_format_wide_cells_on_low_row_sheets()
     {
         var sheet = new SheetModel();

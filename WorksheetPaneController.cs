@@ -76,17 +76,20 @@ internal sealed class WorksheetPaneController : IDisposable
     // ----- rendering -----
 
     /// <summary>Rebuilds columns for the sheet and sizes the grid from the view map. O(columns); no per-cell UI objects.</summary>
-    public void RenderSheet(SheetModel sheet)
+    public void RenderSheet(SheetModel sheet, bool preserveColumnWidths = false)
     {
         FlushPendingEdits();
         Source.RefreshBinding();
         int columns = Math.Max(26, sheet.ColumnCount), rows = Math.Max(100, sheet.RowCount);
+        int[] previousWidths = preserveColumnWidths
+            ? Grid.Columns.Cast<DataGridViewColumn>().Select(column => column.Width).ToArray()
+            : [];
         sheet.EnsureSize(rows, columns);
         View.Reset(rows, columns);
         Grid.Columns.Clear();
         for (int c = 0; c < columns; c++)
         {
-            var column = new DataGridViewTextBoxColumn { Name = CellAddress.ColumnName(c), HeaderText = CellAddress.ColumnName(c), SortMode = DataGridViewColumnSortMode.NotSortable, Width = 110 };
+            var column = new DataGridViewTextBoxColumn { Name = CellAddress.ColumnName(c), HeaderText = CellAddress.ColumnName(c), SortMode = DataGridViewColumnSortMode.NotSortable, Width = c < previousWidths.Length ? previousWidths[c] : 110 };
             if (columnHeaderMenu is not null) column.HeaderCell.ContextMenuStrip = columnHeaderMenu;
             Grid.Columns.Add(column);
         }

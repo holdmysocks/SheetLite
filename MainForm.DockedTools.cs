@@ -600,7 +600,7 @@ internal sealed partial class MainForm
     {
         if (sortColumn1.SelectedIndex < 0) return;
         if (sortBaselineWorkbook is null) { ShowSortPanel(); if (sortBaselineWorkbook is null) return; }
-        workbook = sortBaselineWorkbook.Clone(); model = workbook.ActiveSheet.Sheet; filter = null; RefreshPrimarySheetTabs(); Render();
+        workbook = sortBaselineWorkbook.Clone(); model = workbook.ActiveSheet.Sheet; filter = null; RefreshPrimarySheetTabs(); Render(preserveColumnWidths: true);
         int c1 = sortColumn1.SelectedIndex, factor1 = sortDirection1.Text == "Descending" ? -1 : 1, c2 = sortColumn2.SelectedIndex, factor2 = sortDirection2.Text == "Descending" ? -1 : 1;
         var valueCache = new Dictionary<(int Row, int Column), string>();
         string ValueAt(int row, int column)
@@ -634,7 +634,7 @@ internal sealed partial class MainForm
     }
     private void FinishSortPreview(int row, int column, bool changed)
     {
-        Render(); if (grid.RowCount > 0 && grid.ColumnCount > 0) grid.CurrentCell = grid[Math.Clamp(column, 0, grid.ColumnCount - 1), Math.Clamp(row, 0, grid.RowCount - 1)]; dirty = changed || sortBaselineDirty; sortPreviewApplied = changed; sortSaveButton.Enabled = changed; sortRevertButton.Enabled = true; UpdateTitle(); UpdateStatus(); countLabel.Text = changed ? "Sort preview — Save sort or Revert" : "Already in the requested order";
+        Render(preserveColumnWidths: true); if (grid.RowCount > 0 && grid.ColumnCount > 0) grid.CurrentCell = grid[Math.Clamp(column, 0, grid.ColumnCount - 1), Math.Clamp(row, 0, grid.RowCount - 1)]; dirty = changed || sortBaselineDirty; sortPreviewApplied = changed; sortSaveButton.Enabled = changed; sortRevertButton.Enabled = true; UpdateTitle(); UpdateStatus(); countLabel.Text = changed ? "Sort preview — Save sort or Revert" : "Already in the requested order";
     }
     private void SaveSortPreview()
     {
@@ -646,7 +646,7 @@ internal sealed partial class MainForm
     }
     private void RevertSortPreview()
     {
-        if (sortBaselineWorkbook is not null) { workbook = sortBaselineWorkbook.Clone(); model = workbook.ActiveSheet.Sheet; dirty = sortBaselineDirty; filter = null; RefreshPrimarySheetTabs(); Render(); UpdateTitle(); UpdateStatus(); }
+        if (sortBaselineWorkbook is not null) { workbook = sortBaselineWorkbook.Clone(); model = workbook.ActiveSheet.Sheet; dirty = sortBaselineDirty; filter = null; RefreshPrimarySheetTabs(); Render(preserveColumnWidths: true); UpdateTitle(); UpdateStatus(); }
         sortBaselineWorkbook = null; sortSelectedRows.Clear(); sortPreviewApplied = false; sortPanel.Visible = false; RefreshCommandHost();
     }
     private static int CompareWithBlankOrder(string a, string b, bool blanksFirst, int direction) { bool ae = string.IsNullOrWhiteSpace(a), be = string.IsNullOrWhiteSpace(b); if (ae != be) return ae == blanksFirst ? -1 : 1; return CompareCells(a, b) * direction; }
@@ -899,7 +899,7 @@ internal sealed partial class MainForm
         int firstColumn = preserveViewport && secondaryGrid.ColumnCount > 0 ? Math.Max(0, secondaryGrid.FirstDisplayedScrollingColumnIndex) : 0;
         int currentRow = preserveViewport ? secondaryGrid.CurrentCell?.RowIndex ?? 0 : 0, currentColumn = preserveViewport ? secondaryGrid.CurrentCell?.ColumnIndex ?? 0 : 0;
         FlushPendingEdits(secondaryGrid);
-        secondaryLoading = true; secondaryPane.RenderSheet(secondaryModel);
+        secondaryLoading = true; secondaryPane.RenderSheet(secondaryModel, preserveColumnWidths: preserveViewport);
         ApplySecondaryFreeze(); secondaryLoading = false;
         if (secondaryGrid.RowCount > 0 && secondaryGrid.ColumnCount > 0)
         {

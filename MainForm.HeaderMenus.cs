@@ -197,7 +197,7 @@ internal sealed partial class MainForm
         var seen = new HashSet<string>(StringComparer.Ordinal); var duplicates = new List<int>();
         foreach (int row in selected) { string key = string.Join('\u001f', model.Rows[row].Select(cell => cell.Value)); if (!seen.Add(key)) duplicates.Add(row); }
         if (duplicates.Count == 0) { countLabel.Text = "No duplicate rows found"; return; }
-        PushUndo(); model.DeleteRows(duplicates); RenderSelect(Math.Min(duplicates.Min(), model.Rows.Count - 1), 0); countLabel.Text = $"Removed {duplicates.Count:N0} duplicate row(s)";
+        PushUndo(); model.DeleteRows(duplicates); RenderSelect(Math.Min(duplicates.Min(), model.Rows.Count - 1), grid.CurrentCell?.ColumnIndex ?? 0, preserveViewport: true); countLabel.Text = $"Removed {duplicates.Count:N0} duplicate row(s)";
     }
 
     private void HideSelectedRows()
@@ -214,7 +214,7 @@ internal sealed partial class MainForm
     private void DeleteHiddenRows()
     {
         var hidden = Enumerable.Range(0, model.Rows.Count).Except(primaryPane.View.VisibleRows).ToList(); if (hidden.Count == 0) return;
-        PushUndo(); model.DeleteRows(hidden.OrderDescending().ToList()); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; RenderSelect(Math.Min(hidden.Min(), model.Rows.Count - 1), 0);
+        PushUndo(); model.DeleteRows(hidden.OrderDescending().ToList()); filter = null; headerFilterColumn = -1; headerFilterValues = null; headerFilterOperator = headerFilterConditionValue = null; RenderSelect(Math.Min(hidden.Min(), model.Rows.Count - 1), grid.CurrentCell?.ColumnIndex ?? 0, preserveViewport: true);
     }
 
     private void HideSelectedColumns()
@@ -229,7 +229,7 @@ internal sealed partial class MainForm
     private void DeleteHiddenColumns()
     {
         var hidden = grid.Columns.Cast<DataGridViewColumn>().Where(column => !column.Visible && column.Index < model.ColumnCount).Select(column => column.Index).OrderDescending().ToList(); if (hidden.Count == 0) return;
-        PushUndo(); model.DeleteColumns(hidden); RenderSelect(0, Math.Min(hidden.Min(), model.ColumnCount - 1));
+        PushUndo(); model.DeleteColumns(hidden); RenderSelect(grid.CurrentCell?.RowIndex ?? 0, Math.Min(hidden.Min(), model.ColumnCount - 1), preserveViewport: true);
     }
 
     private void SortByTextLength(bool ascending)
@@ -299,7 +299,7 @@ internal sealed partial class MainForm
     private void PushSecondaryEditUndo() { if (secondarySharesPrimary) PushUndo(); else PushSecondaryUndo(); }
     private void MarkSecondaryEdited() { if (secondarySharesPrimary) SetDirty(); else SetSecondaryDirty(); }
 
-    private void InsertSecondaryRow() { if (secondaryModel is null || secondaryGrid.CurrentCell is null) return; PushSecondaryEditUndo(); secondaryModel.InsertRows(SecondaryModelRow(secondaryGrid.CurrentCell.RowIndex)); AfterSecondaryStructureChange(0); }
+    private void InsertSecondaryRow() { if (secondaryModel is null || secondaryGrid.CurrentCell is null) return; PushSecondaryEditUndo(); secondaryModel.InsertRows(SecondaryModelRow(secondaryGrid.CurrentCell.RowIndex)); AfterSecondaryStructureChange(-1); }
     private void InsertSecondaryRowBelow()
     {
         if (secondaryModel is null || secondaryGrid.CurrentCell is null) return;
@@ -310,7 +310,7 @@ internal sealed partial class MainForm
     private void DeleteSecondaryRows()
     {
         if (secondaryModel is null) return; var indices = secondaryGrid.SelectedCells.Cast<DataGridViewCell>().Select(c => SecondaryModelRow(c.RowIndex)).Distinct().Where(i => i < secondaryModel.Rows.Count).OrderDescending().ToList(); if (indices.Count == 0) return;
-        PushSecondaryEditUndo(); secondaryModel.DeleteRows(indices); AfterSecondaryStructureChange(0);
+        PushSecondaryEditUndo(); secondaryModel.DeleteRows(indices); AfterSecondaryStructureChange(-1);
     }
     private void DeleteSecondaryDuplicateRows()
     {
@@ -320,7 +320,7 @@ internal sealed partial class MainForm
         var seen = new HashSet<string>(StringComparer.Ordinal); var duplicates = new List<int>();
         foreach (int row in selected) { string key = string.Join('\u001f', secondaryModel.Rows[row].Select(cell => cell.Value)); if (!seen.Add(key)) duplicates.Add(row); }
         if (duplicates.Count == 0) { countLabel.Text = "No duplicate rows found"; return; }
-        PushSecondaryEditUndo(); secondaryModel.DeleteRows(duplicates); AfterSecondaryStructureChange(0); countLabel.Text = $"Removed {duplicates.Count:N0} duplicate row(s)";
+        PushSecondaryEditUndo(); secondaryModel.DeleteRows(duplicates); AfterSecondaryStructureChange(-1); countLabel.Text = $"Removed {duplicates.Count:N0} duplicate row(s)";
     }
     private void MoveSecondaryRow(int delta)
     {
@@ -402,7 +402,7 @@ internal sealed partial class MainForm
     private void DeleteSecondaryHiddenRows()
     {
         if (secondaryModel is null) return; var hidden = Enumerable.Range(0, secondaryModel.Rows.Count).Except(secondaryPane.View.VisibleRows).ToList(); if (hidden.Count == 0) return;
-        PushSecondaryEditUndo(); secondaryModel.DeleteRows(hidden.OrderDescending().ToList()); secondaryHeaderFilterColumn = -1; secondaryHeaderFilterValues = null; secondaryHeaderFilterOperator = secondaryHeaderFilterConditionValue = null; AfterSecondaryStructureChange(0);
+        PushSecondaryEditUndo(); secondaryModel.DeleteRows(hidden.OrderDescending().ToList()); secondaryHeaderFilterColumn = -1; secondaryHeaderFilterValues = null; secondaryHeaderFilterOperator = secondaryHeaderFilterConditionValue = null; AfterSecondaryStructureChange(-1);
     }
 
     private void HideSecondarySelectedColumns()
