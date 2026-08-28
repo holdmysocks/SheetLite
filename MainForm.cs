@@ -629,17 +629,24 @@ internal sealed partial class MainForm : Form
     private void PaintHeader(object? sender, DataGridViewCellPaintingEventArgs e)
     {
         if ((e.RowIndex >= 0 && e.ColumnIndex >= 0) || e.Graphics is null) return;
-        bool selected = e.State.HasFlag(DataGridViewElementStates.Selected); using var background = new SolidBrush(selected ? Theme.Selection : Theme.HeaderBackground);
-        e.Graphics.FillRectangle(background, e.CellBounds);
-        using var border = new Pen(Theme.CurrentLine);
-        e.Graphics.DrawLine(border, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom);
-        e.Graphics.DrawLine(border, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
-        string text = e.RowIndex == -1 && e.ColumnIndex >= 0 ? grid.Columns[e.ColumnIndex].HeaderText : e.ColumnIndex == -1 && e.RowIndex >= 0 ? (ModelRow(e.RowIndex) + 1).ToString() : "";
-        Color color = selected ? Theme.Purple : e.RowIndex == -1 ? Theme.Foreground : Theme.Comment;
-        var flags = TextFormatFlags.VerticalCenter | (e.ColumnIndex == -1 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter) | TextFormatFlags.EndEllipsis;
-        var bounds = Rectangle.Inflate(e.CellBounds, -6, 0);
-        TextRenderer.DrawText(e.Graphics, text, e.CellStyle?.Font ?? Font, bounds, color, flags);
-        if (e.RowIndex == -1 && e.ColumnIndex >= 0) PaintHeaderDropDown(e.Graphics, e.CellBounds, e.ColumnIndex);
+        Rectangle visibleBounds = VisibleHeaderBounds(grid, e);
+        var graphicsState = e.Graphics.Save();
+        try
+        {
+            e.Graphics.SetClip(visibleBounds, CombineMode.Intersect);
+            bool current = HeaderMatchesCurrentCell(grid, e); using var background = new SolidBrush(current ? Theme.SelectedHeader : Theme.HeaderBackground);
+            e.Graphics.FillRectangle(background, e.CellBounds);
+            using var border = new Pen(Theme.CurrentLine);
+            e.Graphics.DrawLine(border, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom);
+            e.Graphics.DrawLine(border, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
+            string text = e.RowIndex == -1 && e.ColumnIndex >= 0 ? grid.Columns[e.ColumnIndex].HeaderText : e.ColumnIndex == -1 && e.RowIndex >= 0 ? (ModelRow(e.RowIndex) + 1).ToString() : "";
+            Color color = e.RowIndex == -1 ? Theme.Foreground : Theme.Comment;
+            var flags = TextFormatFlags.VerticalCenter | (e.ColumnIndex == -1 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter) | TextFormatFlags.EndEllipsis | TextFormatFlags.PreserveGraphicsClipping;
+            var bounds = Rectangle.Inflate(e.CellBounds, -6, 0);
+            TextRenderer.DrawText(e.Graphics, text, e.CellStyle?.Font ?? Font, bounds, color, flags);
+            if (e.RowIndex == -1 && e.ColumnIndex >= 0) PaintHeaderDropDown(e.Graphics, e.CellBounds, e.ColumnIndex);
+        }
+        finally { e.Graphics.Restore(graphicsState); }
         e.Handled = true;
     }
 
@@ -676,8 +683,7 @@ internal sealed partial class MainForm : Form
 
     private Rectangle FillHandleGrabArea()
     {
-        if (!TryGetFillRange(out var range)) return Rectangle.Empty;
-        Rectangle cell = grid.GetCellDisplayRectangle(range.Right, range.Bottom, false);
+        if (!TryGetFillRange(out var range) || !TryGetFillHandleCellBounds(grid, range.Right, range.Bottom, out Rectangle cell)) return Rectangle.Empty;
         return new Rectangle(cell.Right - 11, cell.Bottom - 11, 18, 18);
     }
 
@@ -717,10 +723,12 @@ internal sealed partial class MainForm : Form
                 using var selectionPen = new Pen(Theme.Purple, 1.5F) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
                 e.Graphics.DrawRectangle(selectionPen, Rectangle.Inflate(selectionBounds, -1, -1));
             }
-            Rectangle cell = grid.GetCellDisplayRectangle(selection.Right, selection.Bottom, false);
-            Rectangle handle = new(cell.Right - 5, cell.Bottom - 5, 9, 9);
-            using var handleFill = new SolidBrush(Theme.Purple); using var handleOutline = new Pen(Theme.CellBackground, 2);
-            e.Graphics.FillEllipse(handleFill, handle); e.Graphics.DrawEllipse(handleOutline, handle);
+            if (TryGetFillHandleCellBounds(grid, selection.Right, selection.Bottom, out Rectangle cell))
+            {
+                Rectangle handle = new(cell.Right - 5, cell.Bottom - 5, 9, 9);
+                using var handleFill = new SolidBrush(Theme.Purple); using var handleOutline = new Pen(Theme.CellBackground, 2);
+                e.Graphics.FillEllipse(handleFill, handle); e.Graphics.DrawEllipse(handleOutline, handle);
+            }
         }
         if (!fillDragging) return; Rectangle bounds = CellRangeDisplayRectangle(fillPreview); if (bounds.IsEmpty) return;
         using var pen = new Pen(Theme.Purple, 2) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
@@ -1186,6 +1194,34 @@ internal sealed partial class MainForm : Form
         }
         SetDirty();
     }
+
+    private static bool HeaderMatchesCurrentCell(DataGridView owner, DataGridViewCellPaintingEventArgs e) => owner.CurrentCell is { } current &&
+        (e.RowIndex == -1 && e.ColumnIndex == current.ColumnIndex || e.ColumnIndex == -1 && e.RowIndex == current.RowIndex);
+
+    private static Rectangle VisibleHeaderBounds(DataGridView owner, DataGridViewCellPaintingEventArgs e)
+    {
+        Rectangle bounds = e.CellBounds;
+        // Partially scrolled headers retain their full cell bounds, so keep their custom paint
+        // out of the top-left intersection shared by the row and column headers.
+        if (e.RowIndex == -1 && e.ColumnIndex >= 0 && owner.RowHeadersVisible)
+            bounds.Intersect(Rectangle.FromLTRB(owner.RowHeadersWidth, bounds.Top, owner.ClientSize.Width, bounds.Bottom));
+        else if (e.ColumnIndex == -1 && e.RowIndex >= 0 && owner.ColumnHeadersVisible)
+            bounds.Intersect(Rectangle.FromLTRB(bounds.Left, owner.ColumnHeadersHeight, bounds.Right, owner.ClientSize.Height));
+        return bounds;
+    }
+
+    private static bool TryGetFillHandleCellBounds(DataGridView owner, int column, int row, out Rectangle bounds)
+    {
+        bounds = Rectangle.Empty;
+        if (!owner[column, row].Displayed) return false;
+        // The clipped rectangle collapses against a viewport edge when the cell scrolls away,
+        // which used to leave the fill handle looking like a dot in that corner.
+        Rectangle fullBounds = owner.GetCellDisplayRectangle(column, row, true);
+        Rectangle visibleBounds = owner.GetCellDisplayRectangle(column, row, false);
+        if (fullBounds.IsEmpty || visibleBounds.IsEmpty || visibleBounds.Right != fullBounds.Right || visibleBounds.Bottom != fullBounds.Bottom) return false;
+        bounds = fullBounds;
+        return true;
+    }
     private static string ColumnName(int index) => CellAddress.ColumnName(index);
     private void SetDirty()
     {
@@ -1322,6 +1358,27 @@ internal sealed class SmoothDataGridView : DataGridView
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
         UpdateStyles();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (!RowHeadersVisible || !ColumnHeadersVisible) return;
+
+        Rectangle corner = new(0, 0, RowHeadersWidth, ColumnHeadersHeight);
+        var graphicsState = e.Graphics.Save();
+        try
+        {
+            // Header cells can paint beyond their visible bounds while scrolling. Repaint the
+            // intentionally blank intersection last so column/row header content cannot bleed in.
+            e.Graphics.SetClip(corner, CombineMode.Replace);
+            using var background = new SolidBrush(Theme.HeaderBackground);
+            using var border = new Pen(Theme.CurrentLine);
+            e.Graphics.FillRectangle(background, corner);
+            e.Graphics.DrawLine(border, corner.Right - 1, corner.Top, corner.Right - 1, corner.Bottom);
+            e.Graphics.DrawLine(border, corner.Left, corner.Bottom - 1, corner.Right, corner.Bottom - 1);
+        }
+        finally { e.Graphics.Restore(graphicsState); }
     }
 
     protected override void OnScroll(ScrollEventArgs e)

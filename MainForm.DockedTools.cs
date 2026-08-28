@@ -385,7 +385,7 @@ internal sealed partial class MainForm
         secondaryGrid.CellPainting += PaintPaneDimmer;
         secondaryGrid.Enter += (_, _) => SetActivePane(true); secondaryGrid.MouseDown += (_, _) => SetActivePane(true);
         secondaryGrid.MouseDown += BeginSecondaryFillDrag; secondaryGrid.MouseMove += ContinueSecondaryFillDrag; secondaryGrid.MouseUp += EndSecondaryFillDrag; secondaryGrid.Paint += PaintSecondaryFillPreview;
-        secondaryGrid.SelectionChanged += (_, _) => { if (secondaryPaneActive) { UpdateStatus(); UpdateToolbarFormattingState(); } }; secondaryGrid.CurrentCellChanged += (_, _) => { if (secondaryPaneActive) { UpdateStatus(); UpdateToolbarFormattingState(); } };
+        secondaryGrid.SelectionChanged += (_, _) => { secondaryGrid.Invalidate(); if (secondaryPaneActive) { UpdateStatus(); UpdateToolbarFormattingState(); } }; secondaryGrid.CurrentCellChanged += (_, _) => { secondaryGrid.Invalidate(); if (secondaryPaneActive) { UpdateStatus(); UpdateToolbarFormattingState(); } };
         secondaryGrid.CellParsing += (_, e) => { if (e.Value is not null) { e.Value = e.Value.ToString(); e.ParsingApplied = true; } };
         secondaryGrid.EditingControlShowing += (_, e) => { if (e.Control is TextBox box) { box.BorderStyle = BorderStyle.None; if (secondaryGrid.CurrentCell is { } cell) { CellDisplayValue display = secondaryPane.Source.GetDisplayValue(new(SecondaryModelRow(cell.RowIndex), cell.ColumnIndex)); box.BackColor = display.BackColor; box.ForeColor = display.ForeColor; } } };
     }
@@ -393,11 +393,19 @@ internal sealed partial class MainForm
     private void PaintSecondaryHeader(object? sender, DataGridViewCellPaintingEventArgs e)
     {
         if ((e.RowIndex >= 0 && e.ColumnIndex >= 0) || e.Graphics is null) return;
-        bool selected = e.State.HasFlag(DataGridViewElementStates.Selected); using var background = new SolidBrush(selected ? Theme.Selection : Theme.HeaderBackground); e.Graphics.FillRectangle(background, e.CellBounds);
-        using var border = new Pen(Theme.CurrentLine); e.Graphics.DrawLine(border, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom); e.Graphics.DrawLine(border, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
-        string text = e.RowIndex == -1 && e.ColumnIndex >= 0 ? secondaryGrid.Columns[e.ColumnIndex].HeaderText : e.ColumnIndex == -1 && e.RowIndex >= 0 ? (SecondaryModelRow(e.RowIndex) + 1).ToString() : "";
-        Color color = selected ? Theme.Purple : e.RowIndex == -1 ? Theme.Foreground : Theme.Comment; var flags = TextFormatFlags.VerticalCenter | (e.ColumnIndex == -1 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter) | TextFormatFlags.EndEllipsis;
-        TextRenderer.DrawText(e.Graphics, text, e.CellStyle?.Font ?? Font, Rectangle.Inflate(e.CellBounds, -6, 0), color, flags); e.Handled = true;
+        Rectangle visibleBounds = VisibleHeaderBounds(secondaryGrid, e);
+        var graphicsState = e.Graphics.Save();
+        try
+        {
+            e.Graphics.SetClip(visibleBounds, System.Drawing.Drawing2D.CombineMode.Intersect);
+            bool current = HeaderMatchesCurrentCell(secondaryGrid, e); using var background = new SolidBrush(current ? Theme.SelectedHeader : Theme.HeaderBackground); e.Graphics.FillRectangle(background, e.CellBounds);
+            using var border = new Pen(Theme.CurrentLine); e.Graphics.DrawLine(border, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom); e.Graphics.DrawLine(border, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
+            string text = e.RowIndex == -1 && e.ColumnIndex >= 0 ? secondaryGrid.Columns[e.ColumnIndex].HeaderText : e.ColumnIndex == -1 && e.RowIndex >= 0 ? (SecondaryModelRow(e.RowIndex) + 1).ToString() : "";
+            Color color = e.RowIndex == -1 ? Theme.Foreground : Theme.Comment; var flags = TextFormatFlags.VerticalCenter | (e.ColumnIndex == -1 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter) | TextFormatFlags.EndEllipsis | TextFormatFlags.PreserveGraphicsClipping;
+            TextRenderer.DrawText(e.Graphics, text, e.CellStyle?.Font ?? Font, Rectangle.Inflate(e.CellBounds, -6, 0), color, flags);
+        }
+        finally { e.Graphics.Restore(graphicsState); }
+        e.Handled = true;
     }
 
     private void PaintSecondarySelection(object? sender, DataGridViewCellPaintingEventArgs e)
@@ -415,8 +423,7 @@ internal sealed partial class MainForm
 
     private Rectangle SecondaryFillHandleGrabArea()
     {
-        if (!secondaryPaneActive || !TryGetSecondaryFillRange(out var range)) return Rectangle.Empty;
-        Rectangle cell = secondaryGrid.GetCellDisplayRectangle(range.Right, range.Bottom, false);
+        if (!secondaryPaneActive || !TryGetSecondaryFillRange(out var range) || !TryGetFillHandleCellBounds(secondaryGrid, range.Right, range.Bottom, out Rectangle cell)) return Rectangle.Empty;
         return new Rectangle(cell.Right - 11, cell.Bottom - 11, 18, 18);
     }
 
@@ -456,10 +463,12 @@ internal sealed partial class MainForm
                 using var selectionPen = new Pen(Theme.Purple, 1.5F) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
                 e.Graphics.DrawRectangle(selectionPen, Rectangle.Inflate(selectionBounds, -1, -1));
             }
-            Rectangle cell = secondaryGrid.GetCellDisplayRectangle(selection.Right, selection.Bottom, false);
-            Rectangle handle = new(cell.Right - 5, cell.Bottom - 5, 9, 9);
-            using var handleFill = new SolidBrush(Theme.Purple); using var handleOutline = new Pen(Theme.CellBackground, 2);
-            e.Graphics.FillEllipse(handleFill, handle); e.Graphics.DrawEllipse(handleOutline, handle);
+            if (TryGetFillHandleCellBounds(secondaryGrid, selection.Right, selection.Bottom, out Rectangle cell))
+            {
+                Rectangle handle = new(cell.Right - 5, cell.Bottom - 5, 9, 9);
+                using var handleFill = new SolidBrush(Theme.Purple); using var handleOutline = new Pen(Theme.CellBackground, 2);
+                e.Graphics.FillEllipse(handleFill, handle); e.Graphics.DrawEllipse(handleOutline, handle);
+            }
         }
         if (!secondaryFillDragging) return; Rectangle bounds = SecondaryCellRangeDisplayRectangle(secondaryFillPreview); if (bounds.IsEmpty) return;
         using var pen = new Pen(Theme.Purple, 2) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash }; e.Graphics.DrawRectangle(pen, Rectangle.Inflate(bounds, -1, -1));

@@ -9,6 +9,7 @@ internal static class Theme
     public static readonly Color CellBackground = ColorTranslator.FromHtml("#171717");
     public static readonly Color Hover = ColorTranslator.FromHtml("#343746");
     public static readonly Color Selection = ColorTranslator.FromHtml("#3A3153");
+    public static readonly Color SelectedHeader = ColorTranslator.FromHtml("#2A2538");
     public static readonly Color Background = Surface;
     public static readonly Color CurrentLine = ColorTranslator.FromHtml("#383B4A");
     public static readonly Color Foreground = ColorTranslator.FromHtml("#F8F8F2");
